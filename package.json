@@ -1,0 +1,12 @@
+{
+  "name": "automata-arcade",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automata Arcade: Conway Life sandbox + arcade challenge mode.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "serve": "node server.js",
+    "check": "node --check app.js && node --check server.js"
+  }
+}

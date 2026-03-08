@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Automata Arcade</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Automata Arcade</h1>
+          <p>Engineering Lab // Cellular Sandbox + Mission Mode</p>
+        </div>
+        <div class="hud" id="hudStats">
+          <div class="hud-item"><span>Generation</span><strong id="genOut">0</strong></div>
+          <div class="hud-item"><span>Population</span><strong id="popOut">0</strong></div>
+          <div class="hud-item"><span>Score</span><strong id="scoreOut">0</strong></div>
+          <div class="hud-item"><span>Combo</span><strong id="comboOut">x1</strong></div>
+        </div>
+      </header>
+
+      <section class="controls-row">
+        <div class="left-controls">
+          <button id="playBtn">Play</button>
+          <button id="stepBtn">Step</button>
+          <button id="clearBtn">Clear</button>
+          <button id="demoBtn">Load Demo</button>
+          <label class="speed-wrap">Speed
+            <input id="speedInput" type="range" min="1" max="30" value="10" />
+            <span id="speedOut">10</span>
+          </label>
+          <label class="mode-wrap">Mode
+            <select id="modeSelect">
+              <option value="sandbox">Sandbox</option>
+              <option value="arcade">Arcade</option>
+            </select>
+          </label>
+          <label class="level-wrap">Level
+            <select id="levelSelect"></select>
+          </label>
+          <button id="startLevelBtn">Start Level</button>
+        </div>
+        <div class="right-controls">
+          <label>Rotate
+            <select id="rotateSelect">
+              <option value="0">0°</option>
+              <option value="90">90°</option>
+              <option value="180">180°</option>
+              <option value="270">270°</option>
+            </select>
+          </label>
+          <label><input type="checkbox" id="flipX" /> Flip X</label>
+          <div class="objective" id="objectiveText">Sandbox: draw, drop, and experiment.</div>
+        </div>
+      </section>
+
+      <main class="workspace">
+        <aside class="panel palette" id="palettePanel">
+          <h2>Prefab Palette</h2>
+          <p>Drag cards onto the board.</p>
+          <div id="paletteList" class="palette-list"></div>
+        </aside>
+
+        <section class="board-wrap">
+          <canvas id="lifeCanvas"></canvas>
+          <div id="overlayMessage" class="overlay hidden"></div>
+        </section>
+
+        <aside class="panel inspector" id="inspectorPanel">
+          <h2>Inspector</h2>
+          <div id="inspectorBody">
+            <p>Select a prefab card to inspect details.</p>
+          </div>
+          <hr />
+          <h3>Shortcuts</h3>
+          <ul>
+            <li><kbd>Space</kbd> Play/Pause</li>
+            <li><kbd>N</kbd> Step</li>
+            <li><kbd>C</kbd> Clear</li>
+            <li><kbd>D</kbd> Demo</li>
+            <li><kbd>R</kbd> Rotate 90°</li>
+            <li><kbd>F</kbd> Flip X</li>
+            <li><kbd>G</kbd> Toggle grid</li>
+            <li><kbd>1</kbd> Sandbox mode</li>
+            <li><kbd>2</kbd> Arcade mode</li>
+            <li><kbd>Mouse Wheel</kbd> Zoom</li>
+            <li><kbd>Space + Drag</kbd> Pan</li>
+          </ul>
+        </aside>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
