@@ -1,67 +1,45 @@
 # Automata Arcade
 
-Automata Arcade is a fully offline single-page browser game built with vanilla HTML/CSS/JS.
+![Automata Arcade Hero](docs/media/hero.gif)
 
-It includes:
-- A large-grid Conway's Game of Life sandbox with pan/zoom.
-- Play/pause/step/speed controls.
-- Direct drawing on the board.
-- Drag-and-drop prefab palette with rotate/flip placement controls.
-- A right-side inspector with prefab details and usage tips.
-- Arcade mode with 5 challenge levels, scoring, combo, and win/fail states.
-- A seeded visual demo loaded at startup.
+A playful Game of Life lab where you build machines, route signals, and solve arcade-style engineering challenges.
 
-## Run locally
+## Live Demo
 
-Requirements: Node.js 18+.
+**Deployed URL:** https://automata-arcade.vercel.app
 
-```bash
-npm install
-npm run serve
-```
+## What this is for
 
-Server starts on `0.0.0.0:5173` by default.
+Automata Arcade helps people learn cellular automata by *doing*:
+- drag known mechanisms onto the board
+- wire glider flows like logic signals
+- experiment in sandbox mode
+- tackle structured arcade objectives
 
-Open:
-- `http://127.0.0.1:5173`
-- or `http://localhost:5173`
+![What is Automata Arcade](docs/media/what-is-it.png)
 
-## Scripts
+## Feature Highlights
 
-- `npm run serve` (or `npm start`): serve app on `0.0.0.0:5173`
-- `npm run check`: syntax check for JS files
+![Feature Highlights](docs/media/feature-highlights.png)
 
-## Controls
+- Conway Life engine on a large grid
+- Pan, zoom, paint, pause, step, and speed controls
+- Draggable mechanism palette with rotate and flip placement
+- Right-side inspector with prefab details and tips
+- Arcade mode with score, combo, and win/fail states
+- Works fully offline
 
-Mouse:
-- Left click/drag: paint/erase cells (auto toggles based on initial cell state)
-- Mouse wheel: zoom
-- `Space + drag` (or middle-mouse drag): pan
-- Drag prefab card to board: stamp pattern
+## Included mechanism palette
 
-Keyboard:
-- `Space`: play/pause
-- `N`: step one generation
-- `C`: clear board
-- `D`: load demo
-- `R`: rotate prefab placement
-- `F`: flip prefab placement on X axis
-- `G`: toggle grid visibility
-- `1`: sandbox mode
-- `2`: arcade mode
-- `P`: place selected prefab at hover cell
-
-## Palette
-
-Required stamps:
+Core patterns:
 - Glider
-- Lightweight spaceship
+- Lightweight spaceship (LWSS)
 - Gosper glider gun
 - Eater-1
 - Pulse seed
 - Clock seed
 
-Custom prefabs included:
+Custom prefabs:
 - Beacon
 - Toad
 - Blinker Train
@@ -70,34 +48,60 @@ Custom prefabs included:
 - Pinwheel Seed
 - Mini Lab Core
 
-## Arcade mode levels
+## Arcade levels
 
-1. **L1 Courier Duty**: hit one receptor zone in time.
-2. **L2 Beacon Watch**: keep a beacon cluster alive for target generations.
-3. **L3 Twin Switch Boot**: trigger two switch zones.
-4. **L4 Population Tempo**: maintain population within a band.
-5. **L5 Final Assembly**: trigger receptor while protecting a core block.
+1. **L1 Courier Duty**: hit one receptor zone in time
+2. **L2 Beacon Watch**: keep a beacon cluster alive for target generations
+3. **L3 Twin Switch Boot**: trigger two switch zones
+4. **L4 Population Tempo**: maintain population within a band
+5. **L5 Final Assembly**: trigger receptor while protecting a core block
 
-Arcade systems:
-- Score increases by survival and objective events.
-- Combo multiplier rises on chained objective events.
-- Win/fail overlays communicate mission outcomes.
+## Good starter experiments (interesting board setups)
 
-## Project structure
+After launching the app:
+1. Click **Load Demo** for a dual-gun crossfire scene
+2. Drop a **Gosper glider gun**, then place an **Eater-1** in the stream to create a timed stop
+3. Use two **gliders** aimed at a shared region to test collision logic
+4. Build a mini relay with **Clock seed + Pulse seed + Eater** and observe stable cadence
 
-- `index.html`: app shell and UI layout
-- `styles.css`: polished arcade-themed responsive styling
-- `app.js`: Life engine, rendering, interactions, drag/drop, arcade game logic
-- `server.js`: tiny static server (no dependencies)
+## Run locally
 
-## Self-check summary
+Prototype location:
+- `~/projects/automata-arcade`
 
-The implementation was validated with:
-- JS syntax check via `npm run check`
-- Local server startup via `npm run serve`
+Requirements: Node.js 18+
 
-Created deliverables:
-- Offline, framework-free SPA game.
-- Sandbox + arcade loop with 5 levels.
-- Draggable palette with required machines/seeds and 7 custom prefabs.
-- HUD, inspector, keyboard shortcuts, and seeded startup scenario.
+```bash
+cd ~/projects/automata-arcade
+npm install
+npm run serve
+```
+
+Server binds to `0.0.0.0:5173`
+- Local: `http://localhost:5173`
+- LAN: `http://<your-lan-ip>:5173`
+
+## Scripts
+
+- `npm run serve` or `npm start`: run local server
+- `npm run check`: syntax check (`node --check`)
+
+## Controls
+
+Mouse:
+- Left drag: paint and erase cells
+- Wheel: zoom
+- `Space + Drag` (or middle mouse drag): pan
+- Drag prefab card onto board: place mechanism
+
+Keyboard:
+- `Space` play/pause
+- `N` step one generation
+- `C` clear
+- `D` load demo
+- `R` rotate placement
+- `F` flip X
+- `G` toggle grid
+- `1` sandbox mode
+- `2` arcade mode
+- `P` place selected prefab at hover cell
