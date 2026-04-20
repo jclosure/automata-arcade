@@ -49,7 +49,6 @@
     message: "",
     tickCarry: 0,
     zoneFlash: [],
-    sphereAlive: new Set(),
     sphereRotX: 0.4,
     sphereRotY: 0,
     sphereDrag: false,
@@ -556,12 +555,18 @@
     return [Number(k.slice(0, idx)), Number(k.slice(idx + 1))];
   }
 
+  function normCoord(x, y) {
+    const c = ((Math.floor(x) % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS;
+    const r = ((Math.floor(y) % SPHERE_ROWS) + SPHERE_ROWS) % SPHERE_ROWS;
+    return key(c, r);
+  }
+
   function isAlive(x, y) {
-    return state.alive.has(key(x, y));
+    return state.alive.has(normCoord(x, y));
   }
 
   function setCell(x, y, alive) {
-    const k = key(x, y);
+    const k = normCoord(x, y);
     if (alive) {
       state.alive.add(k);
     } else {
@@ -577,7 +582,6 @@
 
   function clearBoard() {
     state.alive.clear();
-    state.sphereAlive.clear();
     state.generation = 0;
     state.score = 0;
     state.combo = 1;
@@ -623,11 +627,13 @@
     const neighborCounts = new Map();
 
     for (const k of state.alive) {
-      const [x, y] = parseKey(k);
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          if (dx === 0 && dy === 0) continue;
-          const nk = key(x + dx, y + dy);
+      const [c, r] = parseKey(k);
+      for (let dr = -1; dr <= 1; dr += 1) {
+        for (let dc = -1; dc <= 1; dc += 1) {
+          if (dc === 0 && dr === 0) continue;
+          const nc = ((c + dc) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
+          const nr = ((r + dr) % SPHERE_ROWS + SPHERE_ROWS) % SPHERE_ROWS;
+          const nk = key(nc, nr);
           neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
         }
       }
@@ -635,8 +641,7 @@
 
     const next = new Set();
     for (const [k, n] of neighborCounts) {
-      const alive = state.alive.has(k);
-      if (n === 3 || (alive && n === 2)) {
+      if (n === 3 || (state.alive.has(k) && n === 2)) {
         next.add(k);
       }
     }
@@ -660,46 +665,6 @@
       }
       state.zoneFlash = state.zoneFlash.filter((z) => z.ttl > 0);
     }
-  }
-
-  // --- Sphere mode ---
-
-  function sphereNeighbors(c, r) {
-    const result = [];
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        if (dr === 0 && dc === 0) continue;
-        let nc = ((c + dc) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
-        let nr = r + dr;
-        if (nr < 0) {
-          nr = 0;
-          nc = (nc + SPHERE_COLS / 2) % SPHERE_COLS;
-        } else if (nr >= SPHERE_ROWS) {
-          nr = SPHERE_ROWS - 1;
-          nc = (nc + SPHERE_COLS / 2) % SPHERE_COLS;
-        }
-        result.push(key(nc, nr));
-      }
-    }
-    return result;
-  }
-
-  function stepLifeSphere() {
-    const neighborCounts = new Map();
-    for (const k of state.sphereAlive) {
-      const [c, r] = parseKey(k);
-      for (const nk of sphereNeighbors(c, r)) {
-        neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
-      }
-    }
-    const next = new Set();
-    for (const [k, n] of neighborCounts) {
-      if (n === 3 || (state.sphereAlive.has(k) && n === 2)) {
-        next.add(k);
-      }
-    }
-    state.sphereAlive = next;
-    state.generation += 1;
   }
 
   function createSphereGridLines() {
@@ -749,7 +714,7 @@
     const { cellMesh } = sphereThree;
     cellMesh.geometry.dispose();
 
-    if (state.sphereAlive.size === 0) {
+    if (state.alive.size === 0) {
       cellMesh.geometry = new THREE.BufferGeometry();
       return;
     }
@@ -760,7 +725,7 @@
     const idxs = [];
     let vi = 0;
 
-    for (const k of state.sphereAlive) {
+    for (const k of state.alive) {
       const [c, r] = parseKey(k);
       const phi1 = ((r + PAD) / SPHERE_ROWS) * Math.PI;
       const phi2 = ((r + 1 - PAD) / SPHERE_ROWS) * Math.PI;
@@ -787,9 +752,7 @@
 
   function spherePlaceCells(cells, col, row) {
     for (const [dx, dy] of cells) {
-      const nc = ((col + dx) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
-      const nr = Math.max(0, Math.min(SPHERE_ROWS - 1, row + dy));
-      state.sphereAlive.add(key(nc, nr));
+      setCell(col + dx, row + dy, true);
     }
   }
 
@@ -931,12 +894,7 @@
   }
 
   function sphereSetCell(col, row, alive) {
-    const k = key(col, row);
-    if (alive) {
-      state.sphereAlive.add(k);
-    } else {
-      state.sphereAlive.delete(k);
-    }
+    setCell(col, row, alive);
   }
 
   function initSphereInput() {
@@ -951,7 +909,7 @@
       } else if (e.button === 0) {
         const cell = sphereHitCell(e.clientX, e.clientY);
         if (cell) {
-          state.spherePaintValue = state.sphereAlive.has(key(cell.col, cell.row)) ? 0 : 1;
+          state.spherePaintValue = state.alive.has(normCoord(cell.col, cell.row)) ? 0 : 1;
           state.spherePaintDown = true;
           sphereSetCell(cell.col, cell.row, state.spherePaintValue === 1);
         }
@@ -1088,19 +1046,28 @@
     const maxX = state.cameraX + canvas.width / (2 * state.zoom) + 1;
     const minY = state.cameraY - canvas.height / (2 * state.zoom) - 1;
     const maxY = state.cameraY + canvas.height / (2 * state.zoom) + 1;
-
+    const tileX0 = Math.floor(minX / SPHERE_COLS);
+    const tileX1 = Math.floor(maxX / SPHERE_COLS);
+    const tileY0 = Math.floor(minY / SPHERE_ROWS);
+    const tileY1 = Math.floor(maxY / SPHERE_ROWS);
+    const pad = Math.max(1, Math.floor(state.zoom * 0.08));
     ctx.fillStyle = "#8ef2ff";
     for (const k of state.alive) {
-      const [x, y] = parseKey(k);
-      if (x < minX || x > maxX || y < minY || y > maxY) continue;
-      const screen = worldToScreen(x, y);
-      const pad = Math.max(1, Math.floor(state.zoom * 0.08));
-      ctx.fillRect(
-        Math.floor(screen.x) + pad,
-        Math.floor(screen.y) + pad,
-        Math.ceil(state.zoom) - pad * 2,
-        Math.ceil(state.zoom) - pad * 2,
-      );
+      const [c, r] = parseKey(k);
+      for (let tx = tileX0; tx <= tileX1; tx++) {
+        for (let ty = tileY0; ty <= tileY1; ty++) {
+          const wx = c + tx * SPHERE_COLS;
+          const wy = r + ty * SPHERE_ROWS;
+          if (wx < minX || wx > maxX || wy < minY || wy > maxY) continue;
+          const screen = worldToScreen(wx, wy);
+          ctx.fillRect(
+            Math.floor(screen.x) + pad,
+            Math.floor(screen.y) + pad,
+            Math.ceil(state.zoom) - pad * 2,
+            Math.ceil(state.zoom) - pad * 2,
+          );
+        }
+      }
     }
   }
 
@@ -1164,9 +1131,8 @@
   }
 
   function updateHud() {
-    const pop = state.mode === "sphere" ? state.sphereAlive.size : state.alive.size;
     genOut.textContent = String(state.generation);
-    popOut.textContent = String(pop);
+    popOut.textContent = String(state.alive.size);
     scoreOut.textContent = String(state.score);
     comboOut.textContent = `x${state.combo}`;
     speedOut.textContent = String(state.stepsPerSecond);
@@ -1191,7 +1157,7 @@
         state.tickCarry += dt;
         const stepInterval = 1 / state.stepsPerSecond;
         while (state.tickCarry >= stepInterval) {
-          stepLifeSphere();
+          stepLife();
           state.tickCarry -= stepInterval;
         }
       }
@@ -1458,7 +1424,7 @@
 
     document.getElementById("stepBtn").addEventListener("click", () => {
       if (state.mode === "sphere") {
-        stepLifeSphere();
+        stepLife();
         if (sphereThree) renderSphere();
       } else {
         stepLife();
@@ -1582,7 +1548,7 @@
 
       if (ev.key.toLowerCase() === "n") {
         if (state.mode === "sphere") {
-          stepLifeSphere();
+          stepLife();
           if (sphereThree) renderSphere();
           updateHud();
         } else {
