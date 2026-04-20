@@ -215,6 +215,15 @@ button:hover {
   display: block;
 }
 
+#sphereCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
 .overlay {
   position: absolute;
   inset: 0;

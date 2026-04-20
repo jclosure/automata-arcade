@@ -1,6 +1,7 @@
 (() => {
   const canvas = document.getElementById("lifeCanvas");
   const ctx = canvas.getContext("2d");
+  const sphereCanvas = document.getElementById("sphereCanvas");
 
   const genOut = document.getElementById("genOut");
   const popOut = document.getElementById("popOut");
@@ -48,7 +49,21 @@
     message: "",
     tickCarry: 0,
     zoneFlash: [],
+    sphereAlive: new Set(),
+    sphereRotX: 0.4,
+    sphereRotY: 0,
+    sphereDrag: false,
+    sphereDragLastX: 0,
+    sphereDragLastY: 0,
+    spherePaintDown: false,
+    spherePaintValue: 1,
+    sphereCameraZ: 13,
+    sphereHoverCell: null,
   };
+
+  const SPHERE_COLS = 180;
+  const SPHERE_ROWS = 90;
+  let sphereThree = null;
 
   const REQUIRED_PREFABS = [
     {
@@ -562,6 +577,7 @@
 
   function clearBoard() {
     state.alive.clear();
+    state.sphereAlive.clear();
     state.generation = 0;
     state.score = 0;
     state.combo = 1;
@@ -645,6 +661,365 @@
       state.zoneFlash = state.zoneFlash.filter((z) => z.ttl > 0);
     }
   }
+
+  // --- Sphere mode ---
+
+  function sphereNeighbors(c, r) {
+    const result = [];
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        let nc = ((c + dc) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
+        let nr = r + dr;
+        if (nr < 0) {
+          nr = 0;
+          nc = (nc + SPHERE_COLS / 2) % SPHERE_COLS;
+        } else if (nr >= SPHERE_ROWS) {
+          nr = SPHERE_ROWS - 1;
+          nc = (nc + SPHERE_COLS / 2) % SPHERE_COLS;
+        }
+        result.push(key(nc, nr));
+      }
+    }
+    return result;
+  }
+
+  function stepLifeSphere() {
+    const neighborCounts = new Map();
+    for (const k of state.sphereAlive) {
+      const [c, r] = parseKey(k);
+      for (const nk of sphereNeighbors(c, r)) {
+        neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
+      }
+    }
+    const next = new Set();
+    for (const [k, n] of neighborCounts) {
+      if (n === 3 || (state.sphereAlive.has(k) && n === 2)) {
+        next.add(k);
+      }
+    }
+    state.sphereAlive = next;
+    state.generation += 1;
+  }
+
+  function createSphereGridLines() {
+    const R = 5.005;
+    const verts = [];
+    const LAT_SEGS = 128;
+    const LON_SEGS = 64;
+
+    for (let r = 0; r <= SPHERE_ROWS; r++) {
+      const phi = (r / SPHERE_ROWS) * Math.PI;
+      const rLat = R * Math.sin(phi);
+      const y = R * Math.cos(phi);
+      if (rLat < 1e-4) continue;
+      for (let i = 0; i < LAT_SEGS; i++) {
+        const t0 = (i / LAT_SEGS) * Math.PI * 2;
+        const t1 = ((i + 1) / LAT_SEGS) * Math.PI * 2;
+        verts.push(rLat * Math.cos(t0), y, rLat * Math.sin(t0));
+        verts.push(rLat * Math.cos(t1), y, rLat * Math.sin(t1));
+      }
+    }
+
+    for (let c = 0; c < SPHERE_COLS; c++) {
+      const theta = (c / SPHERE_COLS) * Math.PI * 2;
+      for (let i = 0; i < LON_SEGS; i++) {
+        const phi0 = (i / LON_SEGS) * Math.PI;
+        const phi1 = ((i + 1) / LON_SEGS) * Math.PI;
+        verts.push(
+          R * Math.sin(phi0) * Math.cos(theta),
+          R * Math.cos(phi0),
+          R * Math.sin(phi0) * Math.sin(theta),
+        );
+        verts.push(
+          R * Math.sin(phi1) * Math.cos(theta),
+          R * Math.cos(phi1),
+          R * Math.sin(phi1) * Math.sin(theta),
+        );
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0x1a4a66, transparent: true, opacity: 0.55 });
+    return new THREE.LineSegments(geo, mat);
+  }
+
+  function buildCellMesh() {
+    const { cellMesh } = sphereThree;
+    cellMesh.geometry.dispose();
+
+    if (state.sphereAlive.size === 0) {
+      cellMesh.geometry = new THREE.BufferGeometry();
+      return;
+    }
+
+    const R = 5.015;
+    const PAD = 0.08;
+    const verts = [];
+    const idxs = [];
+    let vi = 0;
+
+    for (const k of state.sphereAlive) {
+      const [c, r] = parseKey(k);
+      const phi1 = ((r + PAD) / SPHERE_ROWS) * Math.PI;
+      const phi2 = ((r + 1 - PAD) / SPHERE_ROWS) * Math.PI;
+      const theta1 = ((c + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = ((c + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+
+      const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
+      for (const [phi, theta] of corners) {
+        verts.push(
+          R * Math.sin(phi) * Math.cos(theta),
+          R * Math.cos(phi),
+          R * Math.sin(phi) * Math.sin(theta),
+        );
+      }
+      idxs.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+      vi += 4;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(idxs);
+    cellMesh.geometry = geo;
+  }
+
+  function spherePlaceCells(cells, col, row) {
+    for (const [dx, dy] of cells) {
+      const nc = ((col + dx) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
+      const nr = Math.max(0, Math.min(SPHERE_ROWS - 1, row + dy));
+      state.sphereAlive.add(key(nc, nr));
+    }
+  }
+
+  function spherePlacePrefab(id, col, row, opts = {}) {
+    const prefab = getPrefabById(id);
+    if (!prefab) return;
+    const rotate = opts.rotate ?? Number(rotateSelect.value);
+    const flipX = opts.flipX ?? flipXInput.checked;
+    spherePlaceCells(transformCells(prefab.cells, rotate, flipX), col, row);
+  }
+
+  function buildHoverMesh() {
+    const { hoverMesh } = sphereThree;
+    hoverMesh.geometry.dispose();
+
+    const prefabId = state.draggingPrefabId || state.selectedPrefabId;
+    const hover = state.sphereHoverCell;
+    if (!hover || !prefabId) {
+      hoverMesh.geometry = new THREE.BufferGeometry();
+      return;
+    }
+
+    const prefab = getPrefabById(prefabId);
+    if (!prefab) {
+      hoverMesh.geometry = new THREE.BufferGeometry();
+      return;
+    }
+
+    const cells = transformCells(prefab.cells, Number(rotateSelect.value), flipXInput.checked);
+    const R = 5.022;
+    const PAD = 0.08;
+    const verts = [];
+    const idxs = [];
+    let vi = 0;
+
+    for (const [dx, dy] of cells) {
+      const c = ((hover.col + dx) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
+      const r = Math.max(0, Math.min(SPHERE_ROWS - 1, hover.row + dy));
+      const phi1 = ((r + PAD) / SPHERE_ROWS) * Math.PI;
+      const phi2 = ((r + 1 - PAD) / SPHERE_ROWS) * Math.PI;
+      const theta1 = ((c + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = ((c + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
+      for (const [phi, theta] of corners) {
+        verts.push(
+          R * Math.sin(phi) * Math.cos(theta),
+          R * Math.cos(phi),
+          R * Math.sin(phi) * Math.sin(theta),
+        );
+      }
+      idxs.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+      vi += 4;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(idxs);
+    hoverMesh.geometry = geo;
+  }
+
+  function initSphereRenderer() {
+    const w = sphereCanvas.offsetWidth || 800;
+    const h = sphereCanvas.offsetHeight || 600;
+    const dpr = window.devicePixelRatio || 1;
+
+    const renderer = new THREE.WebGLRenderer({ canvas: sphereCanvas, antialias: true });
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(w, h, false);
+    renderer.setClearColor(0x07121a);
+
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);
+    camera.position.z = state.sphereCameraZ;
+
+    const group = new THREE.Group();
+    scene.add(group);
+
+    const bgMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(5, 128, 64),
+      new THREE.MeshBasicMaterial({ color: 0x07121a }),
+    );
+    group.add(bgMesh);
+
+    const gridLines = createSphereGridLines();
+    gridLines.visible = state.showGrid;
+    group.add(gridLines);
+
+    const cellMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0x8ef2ff, side: THREE.DoubleSide }),
+    );
+    group.add(cellMesh);
+
+    const hoverMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0xf2b84b, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+    );
+    group.add(hoverMesh);
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    sphereThree = { renderer, scene, camera, group, bgMesh, gridLines, cellMesh, hoverMesh, raycaster, mouse };
+  }
+
+  function renderSphere() {
+    if (!sphereThree) return;
+    const { renderer, scene, camera, group, gridLines } = sphereThree;
+    camera.position.z = state.sphereCameraZ;
+    group.rotation.x = state.sphereRotX;
+    group.rotation.y = state.sphereRotY;
+    gridLines.visible = state.showGrid;
+    buildCellMesh();
+    buildHoverMesh();
+    renderer.render(scene, camera);
+  }
+
+  function sphereHitCell(clientX, clientY) {
+    if (!sphereThree) return null;
+    const { raycaster, camera, bgMesh, mouse } = sphereThree;
+    const rect = sphereCanvas.getBoundingClientRect();
+    mouse.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObject(bgMesh);
+    if (!hits.length) return null;
+    const pt = hits[0].point.clone();
+    bgMesh.worldToLocal(pt);
+    const len = pt.length();
+    const phi = Math.acos(Math.max(-1, Math.min(1, pt.y / len)));
+    let theta = Math.atan2(pt.z, pt.x);
+    if (theta < 0) theta += Math.PI * 2;
+    const col = Math.floor((theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS;
+    const row = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor((phi / Math.PI) * SPHERE_ROWS)));
+    return { col, row };
+  }
+
+  function sphereSetCell(col, row, alive) {
+    const k = key(col, row);
+    if (alive) {
+      state.sphereAlive.add(k);
+    } else {
+      state.sphereAlive.delete(k);
+    }
+  }
+
+  function initSphereInput() {
+    sphereCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    sphereCanvas.addEventListener("pointerdown", (e) => {
+      sphereCanvas.setPointerCapture(e.pointerId);
+      if (e.button === 2) {
+        state.sphereDrag = true;
+        state.sphereDragLastX = e.clientX;
+        state.sphereDragLastY = e.clientY;
+      } else if (e.button === 0) {
+        const cell = sphereHitCell(e.clientX, e.clientY);
+        if (cell) {
+          state.spherePaintValue = state.sphereAlive.has(key(cell.col, cell.row)) ? 0 : 1;
+          state.spherePaintDown = true;
+          sphereSetCell(cell.col, cell.row, state.spherePaintValue === 1);
+        }
+      }
+    });
+
+    sphereCanvas.addEventListener("pointermove", (e) => {
+      if (state.sphereDrag) {
+        const dx = e.clientX - state.sphereDragLastX;
+        const dy = e.clientY - state.sphereDragLastY;
+        state.sphereRotY += dx * 0.007;
+        state.sphereRotX += dy * 0.007;
+        state.sphereRotX = Math.max(-Math.PI * 0.9, Math.min(Math.PI * 0.9, state.sphereRotX));
+        state.sphereDragLastX = e.clientX;
+        state.sphereDragLastY = e.clientY;
+      } else if (state.spherePaintDown) {
+        const cell = sphereHitCell(e.clientX, e.clientY);
+        if (cell) {
+          sphereSetCell(cell.col, cell.row, state.spherePaintValue === 1);
+        }
+      }
+    });
+
+    sphereCanvas.addEventListener("pointerup", (e) => {
+      state.sphereDrag = false;
+      state.spherePaintDown = false;
+      if (sphereCanvas.hasPointerCapture(e.pointerId)) {
+        sphereCanvas.releasePointerCapture(e.pointerId);
+      }
+    });
+
+    sphereCanvas.addEventListener("pointercancel", () => {
+      state.sphereDrag = false;
+      state.spherePaintDown = false;
+    });
+
+    sphereCanvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 0.92 : 1.08;
+      state.sphereCameraZ = Math.max(5.6, Math.min(30, state.sphereCameraZ * factor));
+    }, { passive: false });
+
+    sphereCanvas.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      state.sphereHoverCell = sphereHitCell(e.clientX, e.clientY);
+      e.dataTransfer.dropEffect = "copy";
+    });
+
+    sphereCanvas.addEventListener("dragleave", () => {
+      state.sphereHoverCell = null;
+    });
+
+    sphereCanvas.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData("text/plain") || state.draggingPrefabId;
+      const cell = sphereHitCell(e.clientX, e.clientY);
+      state.sphereHoverCell = null;
+      if (!id || !cell) return;
+      spherePlacePrefab(id, cell.col, cell.row);
+      state.selectedPrefabId = id;
+      refreshPaletteSelection();
+      const prefab = getPrefabById(id);
+      if (prefab) renderInspector(prefab);
+      state.draggingPrefabId = null;
+    });
+  }
+
+  // --- End sphere mode ---
 
   function worldToScreen(x, y) {
     const cx = canvas.width / 2;
@@ -789,8 +1164,9 @@
   }
 
   function updateHud() {
+    const pop = state.mode === "sphere" ? state.sphereAlive.size : state.alive.size;
     genOut.textContent = String(state.generation);
-    popOut.textContent = String(state.alive.size);
+    popOut.textContent = String(pop);
     scoreOut.textContent = String(state.score);
     comboOut.textContent = `x${state.combo}`;
     speedOut.textContent = String(state.stepsPerSecond);
@@ -798,6 +1174,8 @@
     if (state.mode === "arcade" && state.levelState) {
       const level = LEVELS[state.levelIndex];
       objectiveText.textContent = `${level.objective} ${level.progress(state.levelState)}`;
+    } else if (state.mode === "sphere") {
+      objectiveText.textContent = "Sphere: left-click to draw cells, right-drag to spin.";
     } else {
       objectiveText.textContent = "Sandbox: draw, drop, and experiment.";
     }
@@ -808,16 +1186,28 @@
     const dt = (now - runTick.last) / 1000;
     runTick.last = now;
 
-    if (state.running) {
-      state.tickCarry += dt;
-      const stepInterval = 1 / state.stepsPerSecond;
-      while (state.tickCarry >= stepInterval) {
-        stepLife();
-        state.tickCarry -= stepInterval;
+    if (state.mode === "sphere") {
+      if (state.running) {
+        state.tickCarry += dt;
+        const stepInterval = 1 / state.stepsPerSecond;
+        while (state.tickCarry >= stepInterval) {
+          stepLifeSphere();
+          state.tickCarry -= stepInterval;
+        }
       }
+      if (sphereThree) renderSphere();
+    } else {
+      if (state.running) {
+        state.tickCarry += dt;
+        const stepInterval = 1 / state.stepsPerSecond;
+        while (state.tickCarry >= stepInterval) {
+          stepLife();
+          state.tickCarry -= stepInterval;
+        }
+      }
+      draw();
     }
 
-    draw();
     updateHud();
     requestAnimationFrame(runTick);
   }
@@ -830,6 +1220,8 @@
     clearBoard();
     state.mode = "sandbox";
     modeSelect.value = "sandbox";
+    canvas.style.display = "block";
+    sphereCanvas.style.display = "none";
     state.cameraX = 0;
     state.cameraY = 0;
 
@@ -853,6 +1245,16 @@
     canvas.width = Math.floor(rect.width * dpr);
     canvas.height = Math.floor(rect.height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (sphereThree && state.mode === "sphere") {
+      const w = sphereCanvas.offsetWidth;
+      const h = sphereCanvas.offsetHeight;
+      if (w > 0 && h > 0) {
+        sphereThree.renderer.setSize(w, h, false);
+        sphereThree.camera.aspect = w / h;
+        sphereThree.camera.updateProjectionMatrix();
+      }
+    }
   }
 
   function handlePointerDown(ev) {
@@ -960,6 +1362,8 @@
     clearBoard();
     state.mode = "arcade";
     modeSelect.value = "arcade";
+    canvas.style.display = "block";
+    sphereCanvas.style.display = "none";
     state.levelIndex = index;
     levelSelect.value = String(index);
     state.cameraX = 0;
@@ -1053,8 +1457,13 @@
     });
 
     document.getElementById("stepBtn").addEventListener("click", () => {
-      stepLife();
-      draw();
+      if (state.mode === "sphere") {
+        stepLifeSphere();
+        if (sphereThree) renderSphere();
+      } else {
+        stepLife();
+        draw();
+      }
       updateHud();
     });
 
@@ -1073,9 +1482,28 @@
 
     modeSelect.addEventListener("change", () => {
       state.mode = modeSelect.value;
-      if (state.mode === "sandbox") {
+      if (state.mode === "sphere") {
+        canvas.style.display = "none";
+        sphereCanvas.style.display = "block";
+        if (!sphereThree) {
+          initSphereRenderer();
+          initSphereInput();
+        } else {
+          const w = sphereCanvas.offsetWidth;
+          const h = sphereCanvas.offsetHeight;
+          sphereThree.renderer.setSize(w, h, false);
+          sphereThree.camera.aspect = w / h;
+          sphereThree.camera.updateProjectionMatrix();
+        }
         state.levelState = null;
         setOverlay("");
+      } else {
+        canvas.style.display = "block";
+        sphereCanvas.style.display = "none";
+        if (state.mode === "sandbox") {
+          state.levelState = null;
+          setOverlay("");
+        }
       }
       updateHud();
     });
@@ -1153,7 +1581,13 @@
       }
 
       if (ev.key.toLowerCase() === "n") {
-        stepLife();
+        if (state.mode === "sphere") {
+          stepLifeSphere();
+          if (sphereThree) renderSphere();
+          updateHud();
+        } else {
+          stepLife();
+        }
       } else if (ev.key.toLowerCase() === "c") {
         clearBoard();
       } else if (ev.key.toLowerCase() === "d") {
@@ -1170,9 +1604,17 @@
       } else if (ev.key === "1") {
         state.mode = "sandbox";
         modeSelect.value = "sandbox";
+        canvas.style.display = "block";
+        sphereCanvas.style.display = "none";
       } else if (ev.key === "2") {
         state.mode = "arcade";
         modeSelect.value = "arcade";
+        canvas.style.display = "block";
+        sphereCanvas.style.display = "none";
+      } else if (ev.key === "3") {
+        state.mode = "sphere";
+        modeSelect.value = "sphere";
+        modeSelect.dispatchEvent(new Event("change"));
       } else if (ev.key.toLowerCase() === "p") {
         const id = state.selectedPrefabId;
         if (id && state.hoverCell) {
