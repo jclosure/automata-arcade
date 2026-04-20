@@ -1046,28 +1046,18 @@
     const maxX = state.cameraX + canvas.width / (2 * state.zoom) + 1;
     const minY = state.cameraY - canvas.height / (2 * state.zoom) - 1;
     const maxY = state.cameraY + canvas.height / (2 * state.zoom) + 1;
-    const tileX0 = Math.floor(minX / SPHERE_COLS);
-    const tileX1 = Math.floor(maxX / SPHERE_COLS);
-    const tileY0 = Math.floor(minY / SPHERE_ROWS);
-    const tileY1 = Math.floor(maxY / SPHERE_ROWS);
     const pad = Math.max(1, Math.floor(state.zoom * 0.08));
     ctx.fillStyle = "#8ef2ff";
     for (const k of state.alive) {
       const [c, r] = parseKey(k);
-      for (let tx = tileX0; tx <= tileX1; tx++) {
-        for (let ty = tileY0; ty <= tileY1; ty++) {
-          const wx = c + tx * SPHERE_COLS;
-          const wy = r + ty * SPHERE_ROWS;
-          if (wx < minX || wx > maxX || wy < minY || wy > maxY) continue;
-          const screen = worldToScreen(wx, wy);
-          ctx.fillRect(
-            Math.floor(screen.x) + pad,
-            Math.floor(screen.y) + pad,
-            Math.ceil(state.zoom) - pad * 2,
-            Math.ceil(state.zoom) - pad * 2,
-          );
-        }
-      }
+      if (c < minX || c > maxX || r < minY || r > maxY) continue;
+      const screen = worldToScreen(c, r);
+      ctx.fillRect(
+        Math.floor(screen.x) + pad,
+        Math.floor(screen.y) + pad,
+        Math.ceil(state.zoom) - pad * 2,
+        Math.ceil(state.zoom) - pad * 2,
+      );
     }
   }
 
