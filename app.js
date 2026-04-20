@@ -566,7 +566,7 @@
   // Convert centered flat coords to [0, SPHERE_COLS) x [0, SPHERE_ROWS) for sphere surface mapping
   function toSphereCR(c, r) {
     return [
-      ((c + SPHERE_COLS / 2) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS,
+      ((c % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS,
       ((r + SPHERE_ROWS / 2) % SPHERE_ROWS + SPHERE_ROWS) % SPHERE_ROWS,
     ];
   }
@@ -695,7 +695,7 @@
     }
 
     for (let c = 0; c < SPHERE_COLS; c++) {
-      const theta = (c / SPHERE_COLS) * Math.PI * 2;
+      const theta = Math.PI / 2 - (c / SPHERE_COLS) * Math.PI * 2;
       for (let i = 0; i < LON_SEGS; i++) {
         const phi0 = (i / LON_SEGS) * Math.PI;
         const phi1 = ((i + 1) / LON_SEGS) * Math.PI;
@@ -738,8 +738,8 @@
       const [sc, sr] = toSphereCR(c, r);
       const phi1 = ((sr + PAD) / SPHERE_ROWS) * Math.PI;
       const phi2 = ((sr + 1 - PAD) / SPHERE_ROWS) * Math.PI;
-      const theta1 = ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
-      const theta2 = ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta1 = Math.PI / 2 - ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = Math.PI / 2 - ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
 
       const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
       for (const [phi, theta] of corners) {
@@ -801,8 +801,8 @@
       const [sc, sr] = toSphereCR(hover.col + dx, hover.row + dy);
       const phi1 = ((sr + PAD) / SPHERE_ROWS) * Math.PI;
       const phi2 = ((sr + 1 - PAD) / SPHERE_ROWS) * Math.PI;
-      const theta1 = ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
-      const theta2 = ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta1 = Math.PI / 2 - ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = Math.PI / 2 - ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
       const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
       for (const [phi, theta] of corners) {
         verts.push(
@@ -896,11 +896,11 @@
     const phi = Math.acos(Math.max(-1, Math.min(1, pt.y / len)));
     let theta = Math.atan2(pt.z, pt.x);
     if (theta < 0) theta += Math.PI * 2;
-    const rawCol = Math.floor((theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS;
+    const rawCol = ((Math.floor((0.25 - theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS;
     const rawRow = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor((phi / Math.PI) * SPHERE_ROWS)));
     // Convert sphere [0,W)x[0,H) back to centered [-W/2,W/2)x[-H/2,H/2)
     const col = rawCol >= SPHERE_COLS / 2 ? rawCol - SPHERE_COLS : rawCol;
-    const row = rawRow >= SPHERE_ROWS / 2 ? rawRow - SPHERE_ROWS : rawRow;
+    const row = rawRow - Math.floor(SPHERE_ROWS / 2);
     return { col, row };
   }
 
