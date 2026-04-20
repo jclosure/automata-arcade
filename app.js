@@ -556,9 +556,19 @@
   }
 
   function normCoord(x, y) {
-    const c = ((Math.floor(x) % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS;
-    const r = ((Math.floor(y) % SPHERE_ROWS) + SPHERE_ROWS) % SPHERE_ROWS;
-    return key(c, r);
+    const W = SPHERE_COLS, H = SPHERE_ROWS;
+    const c = ((Math.floor(x) % W) + W) % W;
+    const r = ((Math.floor(y) % H) + H) % H;
+    // Centered range: [-W/2, W/2) x [-H/2, H/2) so flat camera at (0,0) is the middle
+    return key(c >= W / 2 ? c - W : c, r >= H / 2 ? r - H : r);
+  }
+
+  // Convert centered flat coords to [0, SPHERE_COLS) x [0, SPHERE_ROWS) for sphere surface mapping
+  function toSphereCR(c, r) {
+    return [
+      ((c + SPHERE_COLS / 2) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS,
+      ((r + SPHERE_ROWS / 2) % SPHERE_ROWS + SPHERE_ROWS) % SPHERE_ROWS,
+    ];
   }
 
   function isAlive(x, y) {
@@ -631,9 +641,7 @@
       for (let dr = -1; dr <= 1; dr += 1) {
         for (let dc = -1; dc <= 1; dc += 1) {
           if (dc === 0 && dr === 0) continue;
-          const nc = ((c + dc) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
-          const nr = ((r + dr) % SPHERE_ROWS + SPHERE_ROWS) % SPHERE_ROWS;
-          const nk = key(nc, nr);
+          const nk = normCoord(c + dc, r + dr);
           neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
         }
       }
@@ -727,10 +735,11 @@
 
     for (const k of state.alive) {
       const [c, r] = parseKey(k);
-      const phi1 = ((r + PAD) / SPHERE_ROWS) * Math.PI;
-      const phi2 = ((r + 1 - PAD) / SPHERE_ROWS) * Math.PI;
-      const theta1 = ((c + PAD) / SPHERE_COLS) * Math.PI * 2;
-      const theta2 = ((c + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const [sc, sr] = toSphereCR(c, r);
+      const phi1 = ((sr + PAD) / SPHERE_ROWS) * Math.PI;
+      const phi2 = ((sr + 1 - PAD) / SPHERE_ROWS) * Math.PI;
+      const theta1 = ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
 
       const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
       for (const [phi, theta] of corners) {
@@ -789,12 +798,11 @@
     let vi = 0;
 
     for (const [dx, dy] of cells) {
-      const c = ((hover.col + dx) % SPHERE_COLS + SPHERE_COLS) % SPHERE_COLS;
-      const r = Math.max(0, Math.min(SPHERE_ROWS - 1, hover.row + dy));
-      const phi1 = ((r + PAD) / SPHERE_ROWS) * Math.PI;
-      const phi2 = ((r + 1 - PAD) / SPHERE_ROWS) * Math.PI;
-      const theta1 = ((c + PAD) / SPHERE_COLS) * Math.PI * 2;
-      const theta2 = ((c + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const [sc, sr] = toSphereCR(hover.col + dx, hover.row + dy);
+      const phi1 = ((sr + PAD) / SPHERE_ROWS) * Math.PI;
+      const phi2 = ((sr + 1 - PAD) / SPHERE_ROWS) * Math.PI;
+      const theta1 = ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
       const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
       for (const [phi, theta] of corners) {
         verts.push(
@@ -888,8 +896,11 @@
     const phi = Math.acos(Math.max(-1, Math.min(1, pt.y / len)));
     let theta = Math.atan2(pt.z, pt.x);
     if (theta < 0) theta += Math.PI * 2;
-    const col = Math.floor((theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS;
-    const row = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor((phi / Math.PI) * SPHERE_ROWS)));
+    const rawCol = Math.floor((theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS;
+    const rawRow = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor((phi / Math.PI) * SPHERE_ROWS)));
+    // Convert sphere [0,W)x[0,H) back to centered [-W/2,W/2)x[-H/2,H/2)
+    const col = rawCol >= SPHERE_COLS / 2 ? rawCol - SPHERE_COLS : rawCol;
+    const row = rawRow >= SPHERE_ROWS / 2 ? rawRow - SPHERE_ROWS : rawRow;
     return { col, row };
   }
 
