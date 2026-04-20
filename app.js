@@ -1053,6 +1053,7 @@
   }
 
   function drawCells() {
+    const W = SPHERE_COLS, H = SPHERE_ROWS;
     const minX = state.cameraX - canvas.width / (2 * state.zoom) - 1;
     const maxX = state.cameraX + canvas.width / (2 * state.zoom) + 1;
     const minY = state.cameraY - canvas.height / (2 * state.zoom) - 1;
@@ -1061,14 +1062,21 @@
     ctx.fillStyle = "#8ef2ff";
     for (const k of state.alive) {
       const [c, r] = parseKey(k);
-      if (c < minX || c > maxX || r < minY || r > maxY) continue;
-      const screen = worldToScreen(c, r);
-      ctx.fillRect(
-        Math.floor(screen.x) + pad,
-        Math.floor(screen.y) + pad,
-        Math.ceil(state.zoom) - pad * 2,
-        Math.ceil(state.zoom) - pad * 2,
-      );
+      const nMin = Math.ceil((minX - c) / W);
+      const nMax = Math.floor((maxX - c) / W);
+      const mMin = Math.ceil((minY - r) / H);
+      const mMax = Math.floor((maxY - r) / H);
+      for (let n = nMin; n <= nMax; n++) {
+        for (let m = mMin; m <= mMax; m++) {
+          const screen = worldToScreen(c + n * W, r + m * H);
+          ctx.fillRect(
+            Math.floor(screen.x) + pad,
+            Math.floor(screen.y) + pad,
+            Math.ceil(state.zoom) - pad * 2,
+            Math.ceil(state.zoom) - pad * 2,
+          );
+        }
+      }
     }
   }
 
