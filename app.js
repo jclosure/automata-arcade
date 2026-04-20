@@ -23,8 +23,8 @@
     generation: 0,
     running: false,
     stepsPerSecond: Number(speedInput.value),
-    cameraX: 0,
-    cameraY: 0,
+    cameraX: 90,
+    cameraY: 45,
     zoom: 18,
     showGrid: true,
     hoverCell: null,
@@ -356,10 +356,10 @@
       objective: "Hit the receptor zone within 180 generations.",
       genLimit: 180,
       setup() {
-        seedFromPattern("mini-lab", -22, -10);
+        seedFromPattern("mini-lab", 68, 35);
         return {
           type: "receptor",
-          receptor: { x: 36, y: -8, w: 6, h: 6, hit: false },
+          receptor: { x: 126, y: 37, w: 6, h: 6, hit: false },
           hitsNeeded: 1,
           hits: 0,
         };
@@ -389,14 +389,14 @@
       objective: "Keep beacon cluster alive for 120 generations.",
       genLimit: 160,
       setup() {
-        seedFromPattern("beacon", -2, -2);
-        seedFromPattern("eater1", -16, -4);
-        seedFromPattern("toad", 10, 2);
+        seedFromPattern("beacon", 88, 43);
+        seedFromPattern("eater1", 74, 41);
+        seedFromPattern("toad", 100, 47);
         return {
           type: "beacon",
           targetGenerations: 120,
           aliveGenerations: 0,
-          beaconZone: { x: -4, y: -4, w: 10, h: 10 },
+          beaconZone: { x: 86, y: 41, w: 10, h: 10 },
         };
       },
       evaluate(levelState) {
@@ -426,13 +426,13 @@
       objective: "Trigger both switches in 220 generations.",
       genLimit: 220,
       setup() {
-        seedFromPattern("glider", -25, -8, { rotate: 90 });
-        seedFromPattern("drift-fork", -10, -2);
+        seedFromPattern("glider", 65, 37, { rotate: 90 });
+        seedFromPattern("drift-fork", 80, 43);
         return {
           type: "switches",
           switches: [
-            { x: 24, y: -14, w: 6, h: 6, hit: false },
-            { x: 24, y: 10, w: 6, h: 6, hit: false },
+            { x: 114, y: 31, w: 6, h: 6, hit: false },
+            { x: 114, y: 55, w: 6, h: 6, hit: false },
           ],
         };
       },
@@ -463,9 +463,9 @@
       objective: "Maintain population between 60 and 180 for 150 generations.",
       genLimit: 220,
       setup() {
-        seedFromPattern("pulse-seed", -20, -8);
-        seedFromPattern("clock-seed", 14, 4);
-        seedFromPattern("pinwheel-seed", -2, -2);
+        seedFromPattern("pulse-seed", 70, 37);
+        seedFromPattern("clock-seed", 104, 49);
+        seedFromPattern("pinwheel-seed", 88, 43);
         return {
           type: "population-band",
           low: 60,
@@ -480,7 +480,7 @@
         if (pop >= levelState.low && pop <= levelState.high) {
           levelState.stableCount += 1;
           if (levelState.stableCount % 25 === 0) {
-            registerArcadeEvent("tempo", 120, { x: -2, y: -2, w: 4, h: 4 });
+            registerArcadeEvent("tempo", 120, { x: 88, y: 43, w: 4, h: 4 });
           }
         } else {
           levelState.misses += 1;
@@ -503,8 +503,8 @@
       objective: "Trigger receptor and keep core block alive by gen 260.",
       genLimit: 260,
       setup() {
-        seedFromPattern("mini-lab", -30, -8);
-        seedFromPattern("gosper", -45, -20);
+        seedFromPattern("mini-lab", 60, 37);
+        seedFromPattern("gosper", 45, 25);
         placeCells(
           [
             [8, 8],
@@ -512,13 +512,13 @@
             [8, 9],
             [9, 9],
           ],
-          0,
-          0,
+          90,
+          45,
         );
         return {
           type: "finale",
-          receptor: { x: 34, y: -10, w: 8, h: 8, hit: false },
-          coreBlock: { x: 8, y: 8, w: 2, h: 2 },
+          receptor: { x: 124, y: 35, w: 8, h: 8, hit: false },
+          coreBlock: { x: 98, y: 53, w: 2, h: 2 },
         };
       },
       evaluate(levelState) {
@@ -555,20 +555,10 @@
     return [Number(k.slice(0, idx)), Number(k.slice(idx + 1))];
   }
 
+  // Canonical cell space: col ∈ [0, W), row ∈ [0, H). All views map to/from this.
   function normCoord(x, y) {
     const W = SPHERE_COLS, H = SPHERE_ROWS;
-    const c = ((Math.floor(x) % W) + W) % W;
-    const r = ((Math.floor(y) % H) + H) % H;
-    // Centered range: [-W/2, W/2) x [-H/2, H/2) so flat camera at (0,0) is the middle
-    return key(c >= W / 2 ? c - W : c, r >= H / 2 ? r - H : r);
-  }
-
-  // Convert centered flat coords to [0, SPHERE_COLS) x [0, SPHERE_ROWS) for sphere surface mapping
-  function toSphereCR(c, r) {
-    return [
-      ((c % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS,
-      ((r + SPHERE_ROWS / 2) % SPHERE_ROWS + SPHERE_ROWS) % SPHERE_ROWS,
-    ];
+    return key(((Math.floor(x) % W) + W) % W, ((Math.floor(y) % H) + H) % H);
   }
 
   function isAlive(x, y) {
@@ -734,12 +724,11 @@
     let vi = 0;
 
     for (const k of state.alive) {
-      const [c, r] = parseKey(k);
-      const [sc, sr] = toSphereCR(c, r);
-      const phi1 = ((sr + PAD) / SPHERE_ROWS) * Math.PI;
-      const phi2 = ((sr + 1 - PAD) / SPHERE_ROWS) * Math.PI;
-      const theta1 = Math.PI / 2 - ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
-      const theta2 = Math.PI / 2 - ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const [col, row] = parseKey(k);
+      const phi1 = ((row + PAD) / SPHERE_ROWS) * Math.PI;
+      const phi2 = ((row + 1 - PAD) / SPHERE_ROWS) * Math.PI;
+      const theta1 = Math.PI / 2 - ((col + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = Math.PI / 2 - ((col + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
 
       const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
       for (const [phi, theta] of corners) {
@@ -798,11 +787,12 @@
     let vi = 0;
 
     for (const [dx, dy] of cells) {
-      const [sc, sr] = toSphereCR(hover.col + dx, hover.row + dy);
-      const phi1 = ((sr + PAD) / SPHERE_ROWS) * Math.PI;
-      const phi2 = ((sr + 1 - PAD) / SPHERE_ROWS) * Math.PI;
-      const theta1 = Math.PI / 2 - ((sc + PAD) / SPHERE_COLS) * Math.PI * 2;
-      const theta2 = Math.PI / 2 - ((sc + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
+      const col = (((hover.col + dx) % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS;
+      const row = (((hover.row + dy) % SPHERE_ROWS) + SPHERE_ROWS) % SPHERE_ROWS;
+      const phi1 = ((row + PAD) / SPHERE_ROWS) * Math.PI;
+      const phi2 = ((row + 1 - PAD) / SPHERE_ROWS) * Math.PI;
+      const theta1 = Math.PI / 2 - ((col + PAD) / SPHERE_COLS) * Math.PI * 2;
+      const theta2 = Math.PI / 2 - ((col + 1 - PAD) / SPHERE_COLS) * Math.PI * 2;
       const corners = [[phi1, theta1], [phi1, theta2], [phi2, theta2], [phi2, theta1]];
       for (const [phi, theta] of corners) {
         verts.push(
@@ -896,11 +886,8 @@
     const phi = Math.acos(Math.max(-1, Math.min(1, pt.y / len)));
     let theta = Math.atan2(pt.z, pt.x);
     if (theta < 0) theta += Math.PI * 2;
-    const rawCol = ((Math.floor((0.25 - theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS;
-    const rawRow = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor((phi / Math.PI) * SPHERE_ROWS)));
-    // Convert sphere [0,W)x[0,H) back to centered [-W/2,W/2)x[-H/2,H/2)
-    const col = rawCol >= SPHERE_COLS / 2 ? rawCol - SPHERE_COLS : rawCol;
-    const row = rawRow - Math.floor(SPHERE_ROWS / 2);
+    const col = ((Math.floor((0.25 - theta / (Math.PI * 2)) * SPHERE_COLS) % SPHERE_COLS) + SPHERE_COLS) % SPHERE_COLS;
+    const row = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor((phi / Math.PI) * SPHERE_ROWS)));
     return { col, row };
   }
 
@@ -1053,7 +1040,6 @@
   }
 
   function drawCells() {
-    const W = SPHERE_COLS, H = SPHERE_ROWS;
     const minX = state.cameraX - canvas.width / (2 * state.zoom) - 1;
     const maxX = state.cameraX + canvas.width / (2 * state.zoom) + 1;
     const minY = state.cameraY - canvas.height / (2 * state.zoom) - 1;
@@ -1061,22 +1047,15 @@
     const pad = Math.max(1, Math.floor(state.zoom * 0.08));
     ctx.fillStyle = "#8ef2ff";
     for (const k of state.alive) {
-      const [c, r] = parseKey(k);
-      const nMin = Math.ceil((minX - c) / W);
-      const nMax = Math.floor((maxX - c) / W);
-      const mMin = Math.ceil((minY - r) / H);
-      const mMax = Math.floor((maxY - r) / H);
-      for (let n = nMin; n <= nMax; n++) {
-        for (let m = mMin; m <= mMax; m++) {
-          const screen = worldToScreen(c + n * W, r + m * H);
-          ctx.fillRect(
-            Math.floor(screen.x) + pad,
-            Math.floor(screen.y) + pad,
-            Math.ceil(state.zoom) - pad * 2,
-            Math.ceil(state.zoom) - pad * 2,
-          );
-        }
-      }
+      const [col, row] = parseKey(k);
+      if (col < minX || col > maxX || row < minY || row > maxY) continue;
+      const screen = worldToScreen(col, row);
+      ctx.fillRect(
+        Math.floor(screen.x) + pad,
+        Math.floor(screen.y) + pad,
+        Math.ceil(state.zoom) - pad * 2,
+        Math.ceil(state.zoom) - pad * 2,
+      );
     }
   }
 
@@ -1197,19 +1176,19 @@
     modeSelect.value = "sandbox";
     canvas.style.display = "block";
     sphereCanvas.style.display = "none";
-    state.cameraX = 0;
-    state.cameraY = 0;
+    state.cameraX = 90;
+    state.cameraY = 45;
 
-    seedFromPattern("gosper", -58, -15);
-    seedFromPattern("gosper", 22, 16, { rotate: 180 });
-    seedFromPattern("lwss", -12, 22);
-    seedFromPattern("glider", -30, -24);
-    seedFromPattern("glider", -26, -21);
-    seedFromPattern("glider", -23, -18);
-    seedFromPattern("eater1", 12, -10);
-    seedFromPattern("beacon", 2, 6);
-    seedFromPattern("pinwheel-seed", -6, -4);
-    seedFromPattern("spark-crab", 18, 4);
+    seedFromPattern("gosper", 32, 30);
+    seedFromPattern("gosper", 112, 61, { rotate: 180 });
+    seedFromPattern("lwss", 78, 67);
+    seedFromPattern("glider", 60, 21);
+    seedFromPattern("glider", 64, 24);
+    seedFromPattern("glider", 67, 27);
+    seedFromPattern("eater1", 102, 35);
+    seedFromPattern("beacon", 92, 51);
+    seedFromPattern("pinwheel-seed", 84, 41);
+    seedFromPattern("spark-crab", 108, 49);
     setOverlay("Demo loaded: dual gun crossfire in the lab.");
     setTimeout(() => setOverlay(""), 2200);
   }
@@ -1341,8 +1320,8 @@
     sphereCanvas.style.display = "none";
     state.levelIndex = index;
     levelSelect.value = String(index);
-    state.cameraX = 0;
-    state.cameraY = 0;
+    state.cameraX = 90;
+    state.cameraY = 45;
     state.zoom = 16;
     const level = LEVELS[index];
     state.levelState = level.setup();
