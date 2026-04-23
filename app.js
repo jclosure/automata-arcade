@@ -3,6 +3,7 @@
   const ctx = canvas.getContext("2d");
   const sphereCanvas = document.getElementById("sphereCanvas");
   const sharedStateInput = document.getElementById("sharedStateInput");
+  const manifoldSelect = document.getElementById("manifoldSelect");
 
   const genOut = document.getElementById("genOut");
   const popOut = document.getElementById("popOut");
@@ -21,8 +22,9 @@
 
   const state = {
     sharedState: true,
+    flatManifold: "flat",
     alive: new Set(),       // shared game state (torus)
-    flatAlive: new Set(),   // individual flat-mode state (unbounded)
+    flatAlive: new Set(),   // individual flat-mode state
     sphereAlive: new Set(), // individual sphere-mode state (torus)
     generation: 0,
     running: false,
@@ -559,26 +561,81 @@
     return [Number(k.slice(0, idx)), Number(k.slice(idx + 1))];
   }
 
-  // Surface descriptors — each view type provides its own cellKey function.
-  // cellKey normalizes any world coord to a canonical string cell address.
-  // To add a new manifold: define a new surface object with a cellKey method.
+  // Surface descriptors — cellKey(x,y) returns canonical key string or null.
+  // null = absorbing boundary (coordinate outside the manifold's domain).
+  // To add a new manifold: add an entry with name, desc, and cellKey.
   const SURFACES = {
+    flat: {
+      name: "Infinite Plane",
+      desc: "Unbounded 2D field. No wrapping — cells may expand forever.",
+      cellKey(x, y) { return key(Math.floor(x), Math.floor(y)); },
+    },
     torus: {
+      name: "Torus",
+      desc: "Both axes wrap: left↔right and top↔bottom connect seamlessly.",
       cellKey(x, y) {
         const W = SPHERE_COLS, H = SPHERE_ROWS;
         return key(((Math.floor(x) % W) + W) % W, ((Math.floor(y) % H) + H) % H);
       },
     },
-    flat: {
+    klein: {
+      name: "Klein Bottle",
+      desc: "Left↔right wraps normally. Top↔bottom wraps with left-right flip. Non-orientable.",
       cellKey(x, y) {
-        return key(Math.floor(x), Math.floor(y));
+        const W = SPHERE_COLS, H = SPHERE_ROWS;
+        let cx = Math.floor(x), cy = Math.floor(y);
+        const yWraps = Math.floor(cy / H);
+        cy = ((cy % H) + H) % H;
+        cx = ((cx % W) + W) % W;
+        if (Math.abs(yWraps) % 2 === 1) cx = W - 1 - cx;
+        return key(cx, cy);
+      },
+    },
+    rp2: {
+      name: "Projective Plane",
+      desc: "Left↔right wrap flips Y; top↔bottom wrap flips X. Antipodal identification.",
+      cellKey(x, y) {
+        const W = SPHERE_COLS, H = SPHERE_ROWS;
+        let cx = Math.floor(x), cy = Math.floor(y);
+        const xWraps = Math.floor(cx / W);
+        const yWraps = Math.floor(cy / H);
+        cx = ((cx % W) + W) % W;
+        cy = ((cy % H) + H) % H;
+        if (Math.abs(xWraps) % 2 === 1) cy = H - 1 - cy;
+        if (Math.abs(yWraps) % 2 === 1) cx = W - 1 - cx;
+        return key(cx, cy);
+      },
+    },
+    cylinder: {
+      name: "Cylinder",
+      desc: "Left↔right wraps. Top and bottom are absorbing boundaries.",
+      cellKey(x, y) {
+        const W = SPHERE_COLS, H = SPHERE_ROWS;
+        const cy = Math.floor(y);
+        if (cy < 0 || cy >= H) return null;
+        return key(((Math.floor(x) % W) + W) % W, cy);
+      },
+    },
+    mobius: {
+      name: "Möbius Strip",
+      desc: "Left↔right wraps with vertical flip. Top/bottom are absorbing boundaries. Non-orientable.",
+      cellKey(x, y) {
+        const W = SPHERE_COLS, H = SPHERE_ROWS;
+        let cx = Math.floor(x), cy = Math.floor(y);
+        if (cy < 0 || cy >= H) return null;
+        const xWraps = Math.floor(cx / W);
+        cx = ((cx % W) + W) % W;
+        if (Math.abs(xWraps) % 2 === 1) cy = H - 1 - cy;
+        return key(cx, cy);
       },
     },
   };
 
+  // Shared mode always uses torus (sphere view requires it).
+  // Individual flat mode uses the user-selected manifold.
   function activeSurface() {
     if (state.sharedState || state.mode === "sphere") return SURFACES.torus;
-    return SURFACES.flat;
+    return SURFACES[state.flatManifold] || SURFACES.flat;
   }
 
   function activeAlive() {
@@ -591,11 +648,13 @@
   }
 
   function isAlive(x, y) {
-    return activeAlive().has(normCoord(x, y));
+    const k = normCoord(x, y);
+    return k !== null && activeAlive().has(k);
   }
 
   function setCell(x, y, alive) {
     const k = normCoord(x, y);
+    if (k === null) return;
     const s = activeAlive();
     if (alive) s.add(k); else s.delete(k);
   }
@@ -660,7 +719,7 @@
         for (let dc = -1; dc <= 1; dc += 1) {
           if (dc === 0 && dr === 0) continue;
           const nk = surface.cellKey(c + dc, r + dr);
-          neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
+          if (nk !== null) neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
         }
       }
     }
@@ -1139,11 +1198,43 @@
     }
   }
 
+  function drawManifoldBorder() {
+    if (state.mode === "sphere") return;
+    const surface = activeSurface();
+    if (surface === SURFACES.flat) return;
+    const tl = worldToScreen(0, 0);
+    const br = worldToScreen(SPHERE_COLS, SPHERE_ROWS);
+    const w = br.x - tl.x, h = br.y - tl.y;
+    ctx.save();
+    ctx.strokeStyle = "rgba(91,224,188,0.22)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(tl.x, tl.y, w, h);
+    ctx.setLineDash([]);
+    // Tick marks to hint at identification direction
+    const mid = { x: tl.x + w / 2, y: tl.y + h / 2 };
+    ctx.strokeStyle = "rgba(91,224,188,0.45)";
+    ctx.lineWidth = 1.5;
+    const t = 8; // tick half-length
+    // Top edge arrow (→)
+    ctx.beginPath(); ctx.moveTo(mid.x - t, tl.y); ctx.lineTo(mid.x + t, tl.y); ctx.stroke();
+    // Bottom edge arrow: same direction for torus/cylinder, opposite for klein/mobius
+    const flipY = surface === SURFACES.klein || surface === SURFACES.mobius;
+    ctx.beginPath(); ctx.moveTo(mid.x + (flipY ? t : -t), br.y); ctx.lineTo(mid.x + (flipY ? -t : t), br.y); ctx.stroke();
+    // Left edge arrow (↓)
+    ctx.beginPath(); ctx.moveTo(tl.x, mid.y - t); ctx.lineTo(tl.x, mid.y + t); ctx.stroke();
+    // Right edge: same for torus/klein, opposite for rp2
+    const flipX = surface === SURFACES.rp2;
+    ctx.beginPath(); ctx.moveTo(br.x, mid.y + (flipX ? t : -t)); ctx.lineTo(br.x, mid.y + (flipX ? -t : t)); ctx.stroke();
+    ctx.restore();
+  }
+
   function draw() {
     drawBackground();
     drawGrid();
     drawCells();
     drawZones();
+    drawManifoldBorder();
     drawHover();
   }
 
@@ -1158,9 +1249,10 @@
       const level = LEVELS[state.levelIndex];
       objectiveText.textContent = `${level.objective} ${level.progress(state.levelState)}`;
     } else if (state.mode === "sphere") {
-      objectiveText.textContent = "Sphere: left-click to draw cells, right-drag to spin.";
+      objectiveText.textContent = "Sphere — left-click to draw, right-drag to spin.";
     } else {
-      objectiveText.textContent = "Sandbox: draw, drop, and experiment.";
+      const surface = activeSurface();
+      objectiveText.textContent = `${surface.name}: ${surface.desc}`;
     }
   }
 
@@ -1499,6 +1591,12 @@
     });
     sharedStateInput.addEventListener("change", () => {
       state.sharedState = sharedStateInput.checked;
+      updateHud();
+      draw();
+    });
+    manifoldSelect.addEventListener("change", () => {
+      state.flatManifold = manifoldSelect.value;
+      updateHud();
       draw();
     });
 
