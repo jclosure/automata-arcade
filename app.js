@@ -2,6 +2,7 @@
   const canvas = document.getElementById("lifeCanvas");
   const ctx = canvas.getContext("2d");
   const sphereCanvas = document.getElementById("sphereCanvas");
+  const sharedStateInput = document.getElementById("sharedStateInput");
 
   const genOut = document.getElementById("genOut");
   const popOut = document.getElementById("popOut");
@@ -19,7 +20,10 @@
   const overlayMessage = document.getElementById("overlayMessage");
 
   const state = {
-    alive: new Set(),
+    sharedState: true,
+    alive: new Set(),       // shared game state (torus)
+    flatAlive: new Set(),   // individual flat-mode state (unbounded)
+    sphereAlive: new Set(), // individual sphere-mode state (torus)
     generation: 0,
     running: false,
     stepsPerSecond: Number(speedInput.value),
@@ -476,7 +480,7 @@
         };
       },
       evaluate(levelState) {
-        const pop = state.alive.size;
+        const pop = activeAlive().size;
         if (pop >= levelState.low && pop <= levelState.high) {
           levelState.stableCount += 1;
           if (levelState.stableCount % 25 === 0) {
@@ -555,23 +559,45 @@
     return [Number(k.slice(0, idx)), Number(k.slice(idx + 1))];
   }
 
-  // Canonical cell space: col ∈ [0, W), row ∈ [0, H). All views map to/from this.
+  // Surface descriptors — each view type provides its own cellKey function.
+  // cellKey normalizes any world coord to a canonical string cell address.
+  // To add a new manifold: define a new surface object with a cellKey method.
+  const SURFACES = {
+    torus: {
+      cellKey(x, y) {
+        const W = SPHERE_COLS, H = SPHERE_ROWS;
+        return key(((Math.floor(x) % W) + W) % W, ((Math.floor(y) % H) + H) % H);
+      },
+    },
+    flat: {
+      cellKey(x, y) {
+        return key(Math.floor(x), Math.floor(y));
+      },
+    },
+  };
+
+  function activeSurface() {
+    if (state.sharedState || state.mode === "sphere") return SURFACES.torus;
+    return SURFACES.flat;
+  }
+
+  function activeAlive() {
+    if (state.sharedState) return state.alive;
+    return state.mode === "sphere" ? state.sphereAlive : state.flatAlive;
+  }
+
   function normCoord(x, y) {
-    const W = SPHERE_COLS, H = SPHERE_ROWS;
-    return key(((Math.floor(x) % W) + W) % W, ((Math.floor(y) % H) + H) % H);
+    return activeSurface().cellKey(x, y);
   }
 
   function isAlive(x, y) {
-    return state.alive.has(normCoord(x, y));
+    return activeAlive().has(normCoord(x, y));
   }
 
   function setCell(x, y, alive) {
     const k = normCoord(x, y);
-    if (alive) {
-      state.alive.add(k);
-    } else {
-      state.alive.delete(k);
-    }
+    const s = activeAlive();
+    if (alive) s.add(k); else s.delete(k);
   }
 
   function placeCells(cells, originX, originY) {
@@ -581,7 +607,7 @@
   }
 
   function clearBoard() {
-    state.alive.clear();
+    activeAlive().clear();
     state.generation = 0;
     state.score = 0;
     state.combo = 1;
@@ -624,14 +650,16 @@
   }
 
   function stepLife() {
+    const alive = activeAlive();
+    const surface = activeSurface();
     const neighborCounts = new Map();
 
-    for (const k of state.alive) {
+    for (const k of alive) {
       const [c, r] = parseKey(k);
       for (let dr = -1; dr <= 1; dr += 1) {
         for (let dc = -1; dc <= 1; dc += 1) {
           if (dc === 0 && dr === 0) continue;
-          const nk = normCoord(c + dc, r + dr);
+          const nk = surface.cellKey(c + dc, r + dr);
           neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
         }
       }
@@ -639,12 +667,12 @@
 
     const next = new Set();
     for (const [k, n] of neighborCounts) {
-      if (n === 3 || (state.alive.has(k) && n === 2)) {
-        next.add(k);
-      }
+      if (n === 3 || (alive.has(k) && n === 2)) next.add(k);
     }
 
-    state.alive = next;
+    if (state.sharedState) state.alive = next;
+    else if (state.mode === "sphere") state.sphereAlive = next;
+    else state.flatAlive = next;
     state.generation += 1;
 
     if (state.mode === "arcade") {
@@ -712,7 +740,8 @@
     const { cellMesh } = sphereThree;
     cellMesh.geometry.dispose();
 
-    if (state.alive.size === 0) {
+    const sphereAlive = activeAlive();
+    if (sphereAlive.size === 0) {
       cellMesh.geometry = new THREE.BufferGeometry();
       return;
     }
@@ -723,7 +752,7 @@
     const idxs = [];
     let vi = 0;
 
-    for (const k of state.alive) {
+    for (const k of sphereAlive) {
       const [col, row] = parseKey(k);
       const phi1 = ((row + PAD) / SPHERE_ROWS) * Math.PI;
       const phi2 = ((row + 1 - PAD) / SPHERE_ROWS) * Math.PI;
@@ -907,7 +936,7 @@
       } else if (e.button === 0) {
         const cell = sphereHitCell(e.clientX, e.clientY);
         if (cell) {
-          state.spherePaintValue = state.alive.has(normCoord(cell.col, cell.row)) ? 0 : 1;
+          state.spherePaintValue = activeAlive().has(normCoord(cell.col, cell.row)) ? 0 : 1;
           state.spherePaintDown = true;
           sphereSetCell(cell.col, cell.row, state.spherePaintValue === 1);
         }
@@ -1046,7 +1075,7 @@
     const maxY = state.cameraY + canvas.height / (2 * state.zoom) + 1;
     const pad = Math.max(1, Math.floor(state.zoom * 0.08));
     ctx.fillStyle = "#8ef2ff";
-    for (const k of state.alive) {
+    for (const k of activeAlive()) {
       const [col, row] = parseKey(k);
       if (col < minX || col > maxX || row < minY || row > maxY) continue;
       const screen = worldToScreen(col, row);
@@ -1120,7 +1149,7 @@
 
   function updateHud() {
     genOut.textContent = String(state.generation);
-    popOut.textContent = String(state.alive.size);
+    popOut.textContent = String(activeAlive().size);
     scoreOut.textContent = String(state.score);
     comboOut.textContent = `x${state.combo}`;
     speedOut.textContent = String(state.stepsPerSecond);
@@ -1466,6 +1495,10 @@
       draw();
     });
     flipXInput.addEventListener("change", () => {
+      draw();
+    });
+    sharedStateInput.addEventListener("change", () => {
+      state.sharedState = sharedStateInput.checked;
       draw();
     });
 
