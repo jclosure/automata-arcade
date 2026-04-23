@@ -3,7 +3,6 @@
   const ctx = canvas.getContext("2d");
   const sphereCanvas = document.getElementById("sphereCanvas");
   const sharedStateInput = document.getElementById("sharedStateInput");
-  const manifoldSelect = document.getElementById("manifoldSelect");
 
   const genOut = document.getElementById("genOut");
   const popOut = document.getElementById("popOut");
@@ -22,10 +21,12 @@
 
   const state = {
     sharedState: true,
-    flatManifold: "flat",
-    alive: new Set(),       // shared game state (torus)
-    flatAlive: new Set(),   // individual flat-mode state
-    sphereAlive: new Set(), // individual sphere-mode state (torus)
+    alive: new Set(), // shared game state (all modes)
+    // per-mode alive sets used when sharedState is false
+    modeAlive: {
+      sandbox: new Set(), arcade: new Set(), sphere: new Set(),
+      torus: new Set(), klein: new Set(), mobius: new Set(), cylinder: new Set(),
+    },
     generation: 0,
     running: false,
     stepsPerSecond: Number(speedInput.value),
@@ -69,6 +70,9 @@
   const SPHERE_COLS = 180;
   const SPHERE_ROWS = 90;
   let sphereThree = null;
+  let manifoldThree = null;
+  let _threeRenderer = null;
+  let threeDInputSetup = false;
 
   const REQUIRED_PREFABS = [
     {
@@ -577,6 +581,16 @@
         const W = SPHERE_COLS, H = SPHERE_ROWS;
         return key(((Math.floor(x) % W) + W) % W, ((Math.floor(y) % H) + H) % H);
       },
+      // s,t ∈ [0,1) — canonical cell coords normalised to unit square
+      surfaceFunc(s, t) {
+        const u = s * Math.PI * 2, v = t * Math.PI * 2;
+        const R = 3, r = 1.2;
+        return {
+          x: (R + r * Math.cos(v)) * Math.cos(u),
+          y: r * Math.sin(v),
+          z: (R + r * Math.cos(v)) * Math.sin(u),
+        };
+      },
     },
     klein: {
       name: "Klein Bottle",
@@ -589,6 +603,17 @@
         cx = ((cx % W) + W) % W;
         if (Math.abs(yWraps) % 2 === 1) cx = W - 1 - cx;
         return key(cx, cy);
+      },
+      // Figure-8 immersion: row→big circle (u), col→tube (v).
+      // One u-cycle reflects v (matches cellKey: y-wrap flips x).
+      surfaceFunc(s, t) {
+        const u = t * Math.PI * 2, v = s * Math.PI * 2;
+        const a = 2.5;
+        return {
+          x: (a + Math.cos(u / 2) * Math.sin(v) - Math.sin(u / 2) * Math.sin(2 * v)) * Math.cos(u),
+          y: (a + Math.cos(u / 2) * Math.sin(v) - Math.sin(u / 2) * Math.sin(2 * v)) * Math.sin(u),
+          z: Math.sin(u / 2) * Math.sin(v) + Math.cos(u / 2) * Math.sin(2 * v),
+        };
       },
     },
     rp2: {
@@ -615,6 +640,15 @@
         if (cy < 0 || cy >= H) return null;
         return key(((Math.floor(x) % W) + W) % W, cy);
       },
+      surfaceFunc(s, t) {
+        const u = s * Math.PI * 2;
+        const R = 2.5;
+        return {
+          x: R * Math.cos(u),
+          y: 5 * (t - 0.5),
+          z: R * Math.sin(u),
+        };
+      },
     },
     mobius: {
       name: "Möbius Strip",
@@ -628,19 +662,33 @@
         if (Math.abs(xWraps) % 2 === 1) cy = H - 1 - cy;
         return key(cx, cy);
       },
+      // One u-cycle reflects v (t→1-t): matches Möbius cellKey.
+      surfaceFunc(s, t) {
+        const u = s * Math.PI * 2;
+        const v = (t - 0.5) * 1.5;
+        const R = 3;
+        return {
+          x: (R + v * Math.cos(u / 2)) * Math.cos(u),
+          y: v * Math.sin(u / 2),
+          z: (R + v * Math.cos(u / 2)) * Math.sin(u),
+        };
+      },
     },
   };
 
-  // Shared mode always uses torus (sphere view requires it).
-  // Individual flat mode uses the user-selected manifold.
+  const MANIFOLD_MODES = ["sphere", "torus", "klein", "mobius", "cylinder"];
+  function is3DMode() { return MANIFOLD_MODES.includes(state.mode); }
+
+  // 3D modes use torus wrapping for their topology; flat sandbox/arcade fall back to flat (infinite).
   function activeSurface() {
-    if (state.sharedState || state.mode === "sphere") return SURFACES.torus;
-    return SURFACES[state.flatManifold] || SURFACES.flat;
+    if (SURFACES[state.mode]) return SURFACES[state.mode]; // torus, klein, mobius, cylinder
+    if (state.mode === "sphere" || state.sharedState) return SURFACES.torus;
+    return SURFACES.flat; // sandbox / arcade in individual mode
   }
 
   function activeAlive() {
     if (state.sharedState) return state.alive;
-    return state.mode === "sphere" ? state.sphereAlive : state.flatAlive;
+    return state.modeAlive[state.mode] ?? state.alive;
   }
 
   function normCoord(x, y) {
@@ -730,8 +778,7 @@
     }
 
     if (state.sharedState) state.alive = next;
-    else if (state.mode === "sphere") state.sphereAlive = next;
-    else state.flatAlive = next;
+    else state.modeAlive[state.mode] = next;
     state.generation += 1;
 
     if (state.mode === "arcade") {
@@ -899,15 +946,22 @@
     hoverMesh.geometry = geo;
   }
 
+  function getRenderer() {
+    if (!_threeRenderer) {
+      const dpr = window.devicePixelRatio || 1;
+      _threeRenderer = new THREE.WebGLRenderer({ canvas: sphereCanvas, antialias: true });
+      _threeRenderer.setPixelRatio(dpr);
+      _threeRenderer.setClearColor(0x07121a);
+    }
+    return _threeRenderer;
+  }
+
   function initSphereRenderer() {
     const w = sphereCanvas.offsetWidth || 800;
     const h = sphereCanvas.offsetHeight || 600;
-    const dpr = window.devicePixelRatio || 1;
 
-    const renderer = new THREE.WebGLRenderer({ canvas: sphereCanvas, antialias: true });
-    renderer.setPixelRatio(dpr);
+    const renderer = getRenderer();
     renderer.setSize(w, h, false);
-    renderer.setClearColor(0x07121a);
 
     const scene = new THREE.Scene();
 
@@ -983,7 +1037,15 @@
     setCell(col, row, alive);
   }
 
-  function initSphereInput() {
+  function hitCell3D(clientX, clientY) {
+    if (state.mode === "sphere") return sphereHitCell(clientX, clientY);
+    return manifoldHitCell(clientX, clientY);
+  }
+
+  function init3DInput() {
+    if (threeDInputSetup) return;
+    threeDInputSetup = true;
+
     sphereCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     sphereCanvas.addEventListener("pointerdown", (e) => {
@@ -993,7 +1055,7 @@
         state.sphereDragLastX = e.clientX;
         state.sphereDragLastY = e.clientY;
       } else if (e.button === 0) {
-        const cell = sphereHitCell(e.clientX, e.clientY);
+        const cell = hitCell3D(e.clientX, e.clientY);
         if (cell) {
           state.spherePaintValue = activeAlive().has(normCoord(cell.col, cell.row)) ? 0 : 1;
           state.spherePaintDown = true;
@@ -1012,10 +1074,8 @@
         state.sphereDragLastX = e.clientX;
         state.sphereDragLastY = e.clientY;
       } else if (state.spherePaintDown) {
-        const cell = sphereHitCell(e.clientX, e.clientY);
-        if (cell) {
-          sphereSetCell(cell.col, cell.row, state.spherePaintValue === 1);
-        }
+        const cell = hitCell3D(e.clientX, e.clientY);
+        if (cell) sphereSetCell(cell.col, cell.row, state.spherePaintValue === 1);
       }
     });
 
@@ -1040,7 +1100,7 @@
 
     sphereCanvas.addEventListener("dragover", (e) => {
       e.preventDefault();
-      state.sphereHoverCell = sphereHitCell(e.clientX, e.clientY);
+      state.sphereHoverCell = hitCell3D(e.clientX, e.clientY);
       e.dataTransfer.dropEffect = "copy";
     });
 
@@ -1051,7 +1111,7 @@
     sphereCanvas.addEventListener("drop", (e) => {
       e.preventDefault();
       const id = e.dataTransfer.getData("text/plain") || state.draggingPrefabId;
-      const cell = sphereHitCell(e.clientX, e.clientY);
+      const cell = hitCell3D(e.clientX, e.clientY);
       state.sphereHoverCell = null;
       if (!id || !cell) return;
       spherePlacePrefab(id, cell.col, cell.row);
@@ -1064,6 +1124,164 @@
   }
 
   // --- End sphere mode ---
+
+  // --- Generic parametric manifold renderer ---
+
+  function buildParametricBgMesh(sfn) {
+    const W = SPHERE_COLS, H = SPHERE_ROWS;
+    const pos = [], uvs = [], idx = [];
+    for (let iv = 0; iv <= H; iv++) {
+      for (let iu = 0; iu <= W; iu++) {
+        const s = iu / W, t = iv / H, p = sfn(s, t);
+        pos.push(p.x, p.y, p.z);
+        uvs.push(s, t);
+      }
+    }
+    for (let iv = 0; iv < H; iv++) {
+      for (let iu = 0; iu < W; iu++) {
+        const a = iv * (W + 1) + iu, b = a + 1, c = a + (W + 1), d = c + 1;
+        idx.push(a, b, c, b, d, c);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(idx);
+    return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x07121a, side: THREE.DoubleSide }));
+  }
+
+  function buildParametricGridLines(sfn) {
+    const W = SPHERE_COLS, H = SPHERE_ROWS, SEGS = 32;
+    const verts = [];
+    for (let row = 0; row <= H; row++) {
+      const t = row / H;
+      for (let i = 0; i < SEGS; i++) {
+        const p0 = sfn(i / SEGS, t), p1 = sfn((i + 1) / SEGS, t);
+        verts.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+      }
+    }
+    for (let col = 0; col <= W; col++) {
+      const s = col / W;
+      for (let i = 0; i < SEGS; i++) {
+        const p0 = sfn(s, i / SEGS), p1 = sfn(s, (i + 1) / SEGS);
+        verts.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x1a4a66, transparent: true, opacity: 0.55 }));
+  }
+
+  function buildManifoldCellMesh(mT) {
+    mT.cellMesh.geometry.dispose();
+    const sfn = mT.surfaceFunc, W = SPHERE_COLS, H = SPHERE_ROWS, PAD = 0.05;
+    const alive = activeAlive();
+    if (alive.size === 0) { mT.cellMesh.geometry = new THREE.BufferGeometry(); return; }
+    const verts = [], idx = [];
+    let vi = 0;
+    for (const k of alive) {
+      const [col, row] = parseKey(k);
+      const s1 = (col + PAD) / W, s2 = (col + 1 - PAD) / W;
+      const t1 = (row + PAD) / H, t2 = (row + 1 - PAD) / H;
+      for (const p of [sfn(s1, t1), sfn(s2, t1), sfn(s2, t2), sfn(s1, t2)]) verts.push(p.x, p.y, p.z);
+      idx.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+      vi += 4;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(idx);
+    mT.cellMesh.geometry = geo;
+  }
+
+  function buildManifoldHoverMesh(mT) {
+    mT.hoverMesh.geometry.dispose();
+    const sfn = mT.surfaceFunc, W = SPHERE_COLS, H = SPHERE_ROWS, PAD = 0.05;
+    const prefabId = state.draggingPrefabId || state.selectedPrefabId;
+    const hover = state.sphereHoverCell;
+    if (!hover || !prefabId) { mT.hoverMesh.geometry = new THREE.BufferGeometry(); return; }
+    const prefab = getPrefabById(prefabId);
+    if (!prefab) { mT.hoverMesh.geometry = new THREE.BufferGeometry(); return; }
+    const cells = transformCells(prefab.cells, Number(rotateSelect.value), flipXInput.checked);
+    const verts = [], idx = [];
+    let vi = 0;
+    for (const [dx, dy] of cells) {
+      const col = (((hover.col + dx) % W) + W) % W;
+      const row = Math.max(0, Math.min(H - 1, hover.row + dy));
+      const s1 = (col + PAD) / W, s2 = (col + 1 - PAD) / W;
+      const t1 = (row + PAD) / H, t2 = (row + 1 - PAD) / H;
+      for (const p of [sfn(s1, t1), sfn(s2, t1), sfn(s2, t2), sfn(s1, t2)]) verts.push(p.x, p.y, p.z);
+      idx.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+      vi += 4;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(idx);
+    mT.hoverMesh.geometry = geo;
+  }
+
+  function manifoldHitCell(clientX, clientY) {
+    if (!manifoldThree) return null;
+    const { raycaster, camera, bgMesh, mouse } = manifoldThree;
+    const rect = sphereCanvas.getBoundingClientRect();
+    mouse.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObject(bgMesh);
+    if (!hits.length || !hits[0].uv) return null;
+    const col = Math.max(0, Math.min(SPHERE_COLS - 1, Math.floor(hits[0].uv.x * SPHERE_COLS)));
+    const row = Math.max(0, Math.min(SPHERE_ROWS - 1, Math.floor(hits[0].uv.y * SPHERE_ROWS)));
+    return { col, row };
+  }
+
+  function initManifoldRenderer() {
+    const surface = SURFACES[state.mode];
+    if (!surface || !surface.surfaceFunc) return;
+    const sfn = (s, t) => surface.surfaceFunc(s, t);
+    const renderer = getRenderer();
+    const w = sphereCanvas.offsetWidth || 800;
+    const h = sphereCanvas.offsetHeight || 600;
+    renderer.setSize(w, h, false);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);
+    camera.position.z = state.sphereCameraZ;
+    const group = new THREE.Group();
+    scene.add(group);
+    const bgMesh = buildParametricBgMesh(sfn);
+    group.add(bgMesh);
+    const gridLines = buildParametricGridLines(sfn);
+    gridLines.visible = state.showGrid;
+    group.add(gridLines);
+    const cellMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0x8ef2ff, side: THREE.DoubleSide }),
+    );
+    group.add(cellMesh);
+    const hoverMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0xf2b84b, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+    );
+    group.add(hoverMesh);
+    manifoldThree = {
+      renderer, scene, camera, group, bgMesh, gridLines, cellMesh, hoverMesh,
+      raycaster: new THREE.Raycaster(), mouse: new THREE.Vector2(), surfaceFunc: sfn,
+    };
+  }
+
+  function renderManifold() {
+    if (!manifoldThree) return;
+    const { renderer, scene, camera, group, gridLines } = manifoldThree;
+    camera.position.z = state.sphereCameraZ;
+    group.rotation.x = state.sphereRotX;
+    group.rotation.y = state.sphereRotY;
+    gridLines.visible = state.showGrid;
+    buildManifoldCellMesh(manifoldThree);
+    buildManifoldHoverMesh(manifoldThree);
+    renderer.render(scene, camera);
+  }
+
+  // --- End generic manifold renderer ---
 
   function worldToScreen(x, y) {
     const cx = canvas.width / 2;
@@ -1199,7 +1417,7 @@
   }
 
   function drawManifoldBorder() {
-    if (state.mode === "sphere") return;
+    if (is3DMode()) return;
     const surface = activeSurface();
     if (surface === SURFACES.flat) return;
     const tl = worldToScreen(0, 0);
@@ -1248,8 +1466,10 @@
     if (state.mode === "arcade" && state.levelState) {
       const level = LEVELS[state.levelIndex];
       objectiveText.textContent = `${level.objective} ${level.progress(state.levelState)}`;
-    } else if (state.mode === "sphere") {
-      objectiveText.textContent = "Sphere — left-click to draw, right-drag to spin.";
+    } else if (is3DMode()) {
+      const surface = SURFACES[state.mode];
+      const surfName = surface ? surface.name : "Sphere";
+      objectiveText.textContent = `${surfName} — left-click to draw, right-drag to spin.`;
     } else {
       const surface = activeSurface();
       objectiveText.textContent = `${surface.name}: ${surface.desc}`;
@@ -1261,25 +1481,20 @@
     const dt = (now - runTick.last) / 1000;
     runTick.last = now;
 
+    if (state.running) {
+      state.tickCarry += dt;
+      const stepInterval = 1 / state.stepsPerSecond;
+      while (state.tickCarry >= stepInterval) {
+        stepLife();
+        state.tickCarry -= stepInterval;
+      }
+    }
+
     if (state.mode === "sphere") {
-      if (state.running) {
-        state.tickCarry += dt;
-        const stepInterval = 1 / state.stepsPerSecond;
-        while (state.tickCarry >= stepInterval) {
-          stepLife();
-          state.tickCarry -= stepInterval;
-        }
-      }
       if (sphereThree) renderSphere();
+    } else if (is3DMode()) {
+      if (manifoldThree) renderManifold();
     } else {
-      if (state.running) {
-        state.tickCarry += dt;
-        const stepInterval = 1 / state.stepsPerSecond;
-        while (state.tickCarry >= stepInterval) {
-          stepLife();
-          state.tickCarry -= stepInterval;
-        }
-      }
       draw();
     }
 
@@ -1321,13 +1536,19 @@
     canvas.height = Math.floor(rect.height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    if (sphereThree && state.mode === "sphere") {
+    if (is3DMode()) {
       const w = sphereCanvas.offsetWidth;
       const h = sphereCanvas.offsetHeight;
       if (w > 0 && h > 0) {
-        sphereThree.renderer.setSize(w, h, false);
-        sphereThree.camera.aspect = w / h;
-        sphereThree.camera.updateProjectionMatrix();
+        const renderer = getRenderer();
+        renderer.setSize(w, h, false);
+        if (state.mode === "sphere" && sphereThree) {
+          sphereThree.camera.aspect = w / h;
+          sphereThree.camera.updateProjectionMatrix();
+        } else if (manifoldThree) {
+          manifoldThree.camera.aspect = w / h;
+          manifoldThree.camera.updateProjectionMatrix();
+        }
       }
     }
   }
@@ -1532,13 +1753,10 @@
     });
 
     document.getElementById("stepBtn").addEventListener("click", () => {
-      if (state.mode === "sphere") {
-        stepLife();
-        if (sphereThree) renderSphere();
-      } else {
-        stepLife();
-        draw();
-      }
+      stepLife();
+      if (state.mode === "sphere" && sphereThree) renderSphere();
+      else if (is3DMode() && manifoldThree) renderManifold();
+      else draw();
       updateHud();
     });
 
@@ -1557,19 +1775,22 @@
 
     modeSelect.addEventListener("change", () => {
       state.mode = modeSelect.value;
-      if (state.mode === "sphere") {
+      if (is3DMode()) {
         canvas.style.display = "none";
         sphereCanvas.style.display = "block";
-        if (!sphereThree) {
-          initSphereRenderer();
-          initSphereInput();
+        if (state.mode === "sphere") {
+          if (!sphereThree) initSphereRenderer();
+          else {
+            const renderer = getRenderer();
+            const w = sphereCanvas.offsetWidth, h = sphereCanvas.offsetHeight;
+            renderer.setSize(w, h, false);
+            sphereThree.camera.aspect = w / h;
+            sphereThree.camera.updateProjectionMatrix();
+          }
         } else {
-          const w = sphereCanvas.offsetWidth;
-          const h = sphereCanvas.offsetHeight;
-          sphereThree.renderer.setSize(w, h, false);
-          sphereThree.camera.aspect = w / h;
-          sphereThree.camera.updateProjectionMatrix();
+          initManifoldRenderer();
         }
+        init3DInput();
         state.levelState = null;
         setOverlay("");
       } else {
@@ -1594,12 +1815,6 @@
       updateHud();
       draw();
     });
-    manifoldSelect.addEventListener("change", () => {
-      state.flatManifold = manifoldSelect.value;
-      updateHud();
-      draw();
-    });
-
     for (let i = 0; i < LEVELS.length; i += 1) {
       const opt = document.createElement("option");
       opt.value = String(i);
@@ -1666,13 +1881,10 @@
       }
 
       if (ev.key.toLowerCase() === "n") {
-        if (state.mode === "sphere") {
-          stepLife();
-          if (sphereThree) renderSphere();
-          updateHud();
-        } else {
-          stepLife();
-        }
+        stepLife();
+        if (state.mode === "sphere" && sphereThree) renderSphere();
+        else if (is3DMode() && manifoldThree) renderManifold();
+        updateHud();
       } else if (ev.key.toLowerCase() === "c") {
         clearBoard();
       } else if (ev.key.toLowerCase() === "d") {
@@ -1687,18 +1899,25 @@
       } else if (ev.key.toLowerCase() === "g") {
         state.showGrid = !state.showGrid;
       } else if (ev.key === "1") {
-        state.mode = "sandbox";
         modeSelect.value = "sandbox";
-        canvas.style.display = "block";
-        sphereCanvas.style.display = "none";
+        modeSelect.dispatchEvent(new Event("change"));
       } else if (ev.key === "2") {
-        state.mode = "arcade";
         modeSelect.value = "arcade";
-        canvas.style.display = "block";
-        sphereCanvas.style.display = "none";
+        modeSelect.dispatchEvent(new Event("change"));
       } else if (ev.key === "3") {
-        state.mode = "sphere";
         modeSelect.value = "sphere";
+        modeSelect.dispatchEvent(new Event("change"));
+      } else if (ev.key === "4") {
+        modeSelect.value = "torus";
+        modeSelect.dispatchEvent(new Event("change"));
+      } else if (ev.key === "5") {
+        modeSelect.value = "klein";
+        modeSelect.dispatchEvent(new Event("change"));
+      } else if (ev.key === "6") {
+        modeSelect.value = "mobius";
+        modeSelect.dispatchEvent(new Event("change"));
+      } else if (ev.key === "7") {
+        modeSelect.value = "cylinder";
         modeSelect.dispatchEvent(new Event("change"));
       } else if (ev.key.toLowerCase() === "p") {
         const id = state.selectedPrefabId;
