@@ -357,7 +357,142 @@
     },
   ];
 
-  const PREFABS = [...REQUIRED_PREFABS, ...CUSTOM_PREFABS];
+  const CIRCUIT_PREFABS = [
+    // --- Still lifes: stable building blocks ---
+    {
+      id: "block",
+      name: "Block",
+      type: "still",
+      category: "Circuit",
+      desc: "Simplest 2×2 still life. Stable under all conditions.",
+      tip: "Use as a wire anchor, eater support, or gate terminus. Almost every circuit contains at least one.",
+      period: 1,
+      cells: [[0,0],[1,0],[0,1],[1,1]],
+    },
+    {
+      id: "tub",
+      name: "Tub",
+      type: "still",
+      category: "Circuit",
+      desc: "4-cell diamond still life.",
+      tip: "Compact spacer between active components. Won't interact with distant gliders.",
+      period: 1,
+      cells: [[1,0],[0,1],[2,1],[1,2]],
+    },
+    {
+      id: "beehive",
+      name: "Beehive",
+      type: "still",
+      category: "Circuit",
+      desc: "6-cell still life. Commonly appears as a natural byproduct of glider collisions.",
+      tip: "Often the stable residue after a gate fires — useful to recognise in circuit debugging.",
+      period: 1,
+      cells: [[1,0],[2,0],[0,1],[3,1],[1,2],[2,2]],
+    },
+    {
+      id: "loaf",
+      name: "Loaf",
+      type: "still",
+      category: "Circuit",
+      desc: "7-cell asymmetric still life.",
+      tip: "Appears in some gate constructions as a stable reaction product.",
+      period: 1,
+      cells: [[1,0],[2,0],[0,1],[3,1],[1,2],[3,2],[2,3]],
+    },
+    // --- Oscillators: timing and clocking ---
+    {
+      id: "blinker",
+      name: "Blinker",
+      type: "oscillator",
+      category: "Circuit",
+      desc: "Simplest period-2 oscillator. Alternates between horizontal and vertical.",
+      tip: "Place on a glider path at the right phase to gate or deflect the signal.",
+      period: 2,
+      cells: [[0,0],[1,0],[2,0]],
+    },
+    {
+      id: "pulsar",
+      name: "Pulsar",
+      type: "oscillator",
+      category: "Circuit",
+      desc: "Period-3 oscillator, 48 cells. The most common large natural oscillator.",
+      tip: "Its size and symmetry make it easy to spot. Use as a visual timing reference.",
+      period: 3,
+      cells: [
+        [2,0],[3,0],[4,0],[8,0],[9,0],[10,0],
+        [0,2],[5,2],[7,2],[12,2],
+        [0,3],[5,3],[7,3],[12,3],
+        [0,4],[5,4],[7,4],[12,4],
+        [2,5],[3,5],[4,5],[8,5],[9,5],[10,5],
+        [2,7],[3,7],[4,7],[8,7],[9,7],[10,7],
+        [0,8],[5,8],[7,8],[12,8],
+        [0,9],[5,9],[7,9],[12,9],
+        [0,10],[5,10],[7,10],[12,10],
+        [2,12],[3,12],[4,12],[8,12],[9,12],[10,12],
+      ],
+    },
+    {
+      id: "pentadecathlon",
+      name: "Pentadecathlon",
+      type: "oscillator",
+      category: "Circuit",
+      desc: "Period-15 oscillator, 18 cells. The longest-period common small oscillator.",
+      tip: "Its p15 period can be combined with the p30 Gosper gun for synchronised signal logic.",
+      period: 15,
+      cells: [
+        [2,0],
+        [1,1],[3,1],
+        [0,2],[4,2],[0,3],[4,3],[0,4],[4,4],
+        [0,5],[4,5],[0,6],[4,6],[0,7],[4,7],
+        [1,8],[3,8],
+        [2,9],
+      ],
+    },
+    // --- Seeds: signal generators and stress tests ---
+    {
+      id: "r-pentomino",
+      name: "R-Pentomino",
+      type: "seed",
+      category: "Circuit",
+      desc: "5-cell seed that lives 1103 generations and emits 6 escaping gliders.",
+      tip: "Good for flooding a region with gliders to stress-test circuit defences.",
+      period: 1103,
+      cells: [[1,0],[2,0],[0,1],[1,1],[1,2]],
+    },
+    {
+      id: "acorn",
+      name: "Acorn",
+      type: "seed",
+      category: "Circuit",
+      desc: "7-cell seed that lives 5206 generations and produces 13 gliders, 4 LWSSes.",
+      tip: "Drop in open space to seed a complex environment. Unpredictable in constrained areas.",
+      period: 5206,
+      cells: [[1,0],[3,1],[0,2],[1,2],[4,2],[5,2],[6,2]],
+    },
+    {
+      id: "die-hard",
+      name: "Die Hard",
+      type: "seed",
+      category: "Circuit",
+      desc: "7-cell methuselah that vanishes entirely at generation 130.",
+      tip: "Useful for timed one-shot events — it self-destructs cleanly with no residue.",
+      period: 130,
+      cells: [[6,0],[0,1],[1,1],[1,2],[5,2],[6,2],[7,2]],
+    },
+    // --- Logic carriers ---
+    {
+      id: "herschel",
+      name: "Herschel",
+      type: "machine",
+      category: "Circuit",
+      desc: "7-cell signal carrier. Quickly emits a glider then stabilises — the primitive of Herschel conduits.",
+      tip: "Chain conduits to route a Herschel signal around corners without information loss.",
+      period: 1,
+      cells: [[0,0],[0,1],[1,1],[2,1],[1,2],[1,3],[2,3]],
+    },
+  ];
+
+  const PREFABS = [...REQUIRED_PREFABS, ...CUSTOM_PREFABS, ...CIRCUIT_PREFABS];
 
   const LEVELS = [
     {
