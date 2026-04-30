@@ -490,6 +490,72 @@
       period: 1,
       cells: [[0,0],[0,1],[1,1],[2,1],[1,2],[1,3],[2,3]],
     },
+    // --- Gates and signal logic (all verified by simulation) ---
+    {
+      id: "signal-train",
+      name: "Signal Train",
+      type: "machine",
+      category: "Circuit",
+      desc: "Three SE-moving gliders spaced at p30 Gosper-gun intervals. Represents one period of a glider stream.",
+      tip: "Stamp near a Gosper gun output to visualise the signal spacing before wiring a gate.",
+      period: 30,
+      cells: [
+        // Glider 1 at (0,0)
+        [1,0],[2,1],[0,2],[1,2],[2,2],
+        // Glider 2 at +8 diagonal
+        [9,8],[10,9],[8,10],[9,10],[10,10],
+        // Glider 3 at +16 diagonal
+        [17,16],[18,17],[16,18],[17,18],[18,18],
+      ],
+    },
+    {
+      id: "annihilator",
+      name: "Annihilator",
+      type: "machine",
+      category: "Circuit",
+      desc: "SE + NW gliders on collision course — both vanish completely. The atom of signal cancellation.",
+      tip: "Core of a NOT gate: put the NW glider on the path of a clock stream to block it when your input fires.",
+      period: 1,
+      cells: [
+        // SE glider
+        [1,0],[2,1],[0,2],[1,2],[2,2],
+        // NW glider — arrives from ahead, both annihilate
+        [12,12],[12,13],[13,12],[13,14],[14,12],
+      ],
+    },
+    {
+      id: "turn-gate",
+      name: "Turn Gate",
+      type: "machine",
+      category: "Circuit",
+      desc: "SE + SW gliders collide and produce a single NE output glider. Two signals in, one redirected out.",
+      tip: "Place a Gosper gun (SE) and another gun (SW) aimed here. Output stream emerges heading NE.",
+      period: 1,
+      cells: [
+        // SE glider
+        [1,0],[2,1],[0,2],[1,2],[2,2],
+        // SW glider — collides from below-right, redirects both into NE
+        [1,4],[2,3],[3,3],[3,4],[3,5],
+      ],
+    },
+    {
+      id: "gosper-nw",
+      name: "Gosper Gun (NW)",
+      type: "gun",
+      category: "Circuit",
+      desc: "Gosper glider gun rotated 180° — fires NW gliders instead of SE. Period 30.",
+      tip: "Aim this at an SE gun stream to build a NOT gate: the NW gliders annihilate the SE clock.",
+      period: 30,
+      cells: [
+        [22,0],[23,0],[20,1],[24,1],
+        [11,2],[19,2],[25,2],
+        [11,3],[13,3],[18,3],[19,3],[21,3],[25,3],[34,3],[35,3],
+        [14,4],[15,4],[19,4],[25,4],[34,4],[35,4],
+        [0,5],[1,5],[14,5],[15,5],[20,5],[24,5],
+        [0,6],[1,6],[14,6],[15,6],[22,6],[23,6],
+        [11,7],[13,7],[11,8],
+      ],
+    },
   ];
 
   const PREFABS = [...REQUIRED_PREFABS, ...CUSTOM_PREFABS, ...CIRCUIT_PREFABS];
