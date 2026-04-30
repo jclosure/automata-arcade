@@ -18,6 +18,11 @@
   const paletteList = document.getElementById("paletteList");
   const inspectorBody = document.getElementById("inspectorBody");
   const overlayMessage = document.getElementById("overlayMessage");
+  const guideCard = document.getElementById("guideCard");
+  const guideConcept = document.getElementById("guideConcept");
+  const guideBody = document.getElementById("guideBody");
+  const guideHints = document.getElementById("guideHints");
+  const guideHintBtn = document.getElementById("guideHintBtn");
 
   const state = {
     sharedState: true,
@@ -56,6 +61,7 @@
     message: "",
     tickCarry: 0,
     zoneFlash: [],
+    guide: { hintsRevealed: 0, hints: [] },
     sphereRotX: 0.4,
     sphereRotY: 0,
     sphereDrag: false,
@@ -757,6 +763,186 @@
     },
   ];
 
+  // --- Circuit Academy ---
+  // Gun geometry reference: SE Gosper gun at (35,20) fires first glider at gen ~29,
+  // center ≈ (59,30), traveling SE at c/4 (+1,+1 per 4 gens).
+  const CIRCUIT_LEVELS = [
+    {
+      name: "CA-1 Stream Rider",
+      vibe: "Your first glider stream — just press Play and watch.",
+      objective: "Let the glider stream reach the receptor.",
+      genLimit: 250,
+      guide: {
+        concept: "Glider Streams",
+        body: "The Gosper Gun fires one glider every 30 generations — a perpetual signal clock. Each glider travels diagonally SE at c/4 speed: one step every four generations. This is the fundamental signal carrier of GoL circuits.",
+        hints: [
+          "Press Play. The first glider exits the gun at generation ~30.",
+          "Watch the 45° diagonal trail — one cell right + one cell down every four generations.",
+          "The amber zone is the receptor bay. It lights up on first contact.",
+        ],
+      },
+      setup() {
+        state.cameraX = 65; state.cameraY = 38; state.zoom = 11;
+        seedFromPattern("gosper", 35, 20);
+        return {
+          type: "receptor",
+          receptor: { x: 75, y: 46, w: 10, h: 10, hit: false },
+          hitsNeeded: 1,
+          hits: 0,
+        };
+      },
+      evaluate(levelState) {
+        const zone = levelState.receptor;
+        if (!zone.hit && anyAliveInZone(zone)) {
+          zone.hit = true;
+          levelState.hits += 1;
+          registerArcadeEvent("receptor", 200, zone);
+        }
+        if (levelState.hits >= levelState.hitsNeeded) {
+          return { win: true, msg: "Signal received. Stream Rider complete." };
+        }
+        if (state.generation >= this.genLimit) {
+          return { fail: true, msg: "Timed out. Glider missed the receptor." };
+        }
+        return null;
+      },
+      progress(levelState) {
+        return `Receptor: ${levelState.hits ? "hit" : "waiting"}`;
+      },
+    },
+    {
+      name: "CA-2 Signal Stop",
+      vibe: "A rogue stream threatens the lab. Block it before it breaches.",
+      objective: "Place an Eater-1 in the glider stream to keep the danger zone clear.",
+      genLimit: 350,
+      guide: {
+        concept: "Signal Termination",
+        body: "An Eater-1 absorbs incoming gliders and survives intact. Place one directly in the stream to intercept every packet. The red zone must stay empty — any glider that enters it fails the mission.",
+        hints: [
+          "Select Eater-1 from the palette (Circuit category). Drag it onto the board.",
+          "Drop it somewhere along the diagonal stream path, between the gun and the red danger zone.",
+          "The eater's 'bite' corner must face the incoming glider — rotate with R if needed.",
+        ],
+      },
+      setup() {
+        state.cameraX = 68; state.cameraY = 44; state.zoom = 10;
+        seedFromPattern("gosper", 35, 20);
+        return {
+          type: "prevent",
+          dangerZone: { x: 86, y: 57, w: 10, h: 10, breached: false },
+        };
+      },
+      evaluate(levelState) {
+        const dz = levelState.dangerZone;
+        if (!dz.breached && anyAliveInZone(dz)) {
+          dz.breached = true;
+          return { fail: true, msg: "Breach! Glider entered the danger zone." };
+        }
+        if (state.generation >= this.genLimit) {
+          return { win: true, msg: "Stream contained. Signal termination confirmed." };
+        }
+        return null;
+      },
+      progress(levelState) {
+        return `Danger zone: ${levelState.dangerZone.breached ? "BREACHED" : "clear"}`;
+      },
+    },
+    {
+      name: "CA-3 Parallel Streams",
+      vibe: "Two independent signal lanes. Observe — they do not interact.",
+      objective: "Both receptors must register a hit.",
+      genLimit: 300,
+      guide: {
+        concept: "Signal Independence",
+        body: "Two Gosper Guns fire independent SE streams. Gliders only interact on direct collision, so parallel streams coexist without interference. This is how GoL circuits route multiple signals side by side.",
+        hints: [
+          "Press Play — both guns fire at period 30 but their diagonal paths never cross.",
+          "Trace each stream: upper gun → upper receptor; lower gun → lower receptor.",
+          "Try placing a Block between the two streams — it won't disturb either unless it sits directly on a glider path.",
+        ],
+      },
+      setup() {
+        state.cameraX = 60; state.cameraY = 50; state.zoom = 7;
+        seedFromPattern("gosper", 35, 15);
+        seedFromPattern("gosper", 35, 55);
+        return {
+          type: "switches",
+          switches: [
+            { x: 75, y: 41, w: 8, h: 8, hit: false },
+            { x: 75, y: 81, w: 8, h: 8, hit: false },
+          ],
+        };
+      },
+      evaluate(levelState) {
+        for (const sw of levelState.switches) {
+          if (!sw.hit && anyAliveInZone(sw)) {
+            sw.hit = true;
+            registerArcadeEvent("switch", 220, sw);
+          }
+        }
+        const hits = levelState.switches.filter((s) => s.hit).length;
+        if (hits === levelState.switches.length) {
+          return { win: true, msg: "Both streams delivered. Signal independence confirmed." };
+        }
+        if (state.generation >= this.genLimit) {
+          return { fail: true, msg: "One or both streams missed their receptor." };
+        }
+        return null;
+      },
+      progress(levelState) {
+        const hits = levelState.switches.filter((s) => s.hit).length;
+        return `Receptors: ${hits}/${levelState.switches.length}`;
+      },
+    },
+    {
+      name: "CA-4 Not Today",
+      vibe: "Two streams on a collision course. Both vanish — this is the NOT gate.",
+      objective: "Watch the SE stream get cancelled. Keep the danger zone clear for 200 gens.",
+      genLimit: 400,
+      guide: {
+        concept: "Signal Cancellation (NOT Gate)",
+        body: "When an SE glider meets an NW glider head-on, they annihilate completely — no residue. A counter-stream fired at the correct phase blocks every packet of the original stream. Input present → output absent. This is the NOT gate.",
+        hints: [
+          "Press Play and watch the two streams converge toward the centre of the board.",
+          "Each opposing pair produces a brief flash then vanishes. Cancellation repeats every 30 generations.",
+          "The red zone stays empty if the guns are correctly aligned. If it lights up, the streams are out of phase.",
+        ],
+      },
+      setup() {
+        state.cameraX = 72; state.cameraY = 50; state.zoom = 8;
+        seedFromPattern("gosper", 35, 20);
+        seedFromPattern("gosper-nw", 80, 64);
+        return {
+          type: "prevent",
+          dangerZone: { x: 99, y: 70, w: 10, h: 10, breached: false },
+        };
+      },
+      evaluate(levelState) {
+        const dz = levelState.dangerZone;
+        if (!dz.breached && anyAliveInZone(dz)) {
+          dz.breached = true;
+        }
+        if (state.generation >= 200 && !dz.breached) {
+          return { win: true, msg: "Annihilation confirmed. NOT gate operating." };
+        }
+        if (dz.breached && state.generation >= 150) {
+          return { fail: true, msg: "Signal broke through. Cancellation failed — gun alignment needs tuning." };
+        }
+        if (state.generation >= this.genLimit) {
+          return dz.breached
+            ? { fail: true, msg: "Signal broke through. Cancellation failed." }
+            : { win: true, msg: "Annihilation confirmed. NOT gate operating." };
+        }
+        return null;
+      },
+      progress(levelState) {
+        return `Danger zone: ${levelState.dangerZone.breached ? "BREACHED" : "clear"}`;
+      },
+    },
+  ];
+
+  for (const lvl of CIRCUIT_LEVELS) LEVELS.push(lvl);
+
   function key(x, y) {
     return `${x},${y}`;
   }
@@ -923,6 +1109,7 @@
     state.levelState = null;
     state.zoneFlash = [];
     setOverlay("");
+    hideGuide();
     updateHud();
   }
 
@@ -1576,6 +1763,7 @@
     }
     if (ls.beaconZone) zones.push({ ...ls.beaconZone, kind: "beacon" });
     if (ls.coreBlock) zones.push({ ...ls.coreBlock, kind: "core" });
+    if (ls.dangerZone) zones.push({ ...ls.dangerZone, kind: "danger" });
 
     for (const z of zones) {
       const topLeft = worldToScreen(z.x, z.y);
@@ -1585,8 +1773,13 @@
       if (z.kind === "receptor") ctx.strokeStyle = z.hit ? "#5be0bc" : "#f2b84b";
       else if (z.kind === "switch") ctx.strokeStyle = z.hit ? "#5be0bc" : "#ff8b5e";
       else if (z.kind === "core") ctx.strokeStyle = "#9cd4ff";
+      else if (z.kind === "danger") ctx.strokeStyle = z.breached ? "#ff3b3b" : "#ff6b6b";
       else ctx.strokeStyle = "#9fd8ae";
       ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+      if (z.kind === "danger" && !z.breached) {
+        ctx.fillStyle = "rgba(255, 107, 107, 0.06)";
+        ctx.fillRect(topLeft.x, topLeft.y, width, height);
+      }
     }
 
     for (const flash of state.zoneFlash) {
@@ -1855,8 +2048,39 @@
     state.zoneFlash.push({ zone, ttl: 16, kind });
   }
 
+  function showGuide(guideData) {
+    state.guide.hintsRevealed = 0;
+    state.guide.hints = guideData.hints || [];
+    guideConcept.textContent = guideData.concept;
+    guideBody.textContent = guideData.body;
+    guideHints.innerHTML = "";
+    guideHintBtn.disabled = state.guide.hints.length === 0;
+    guideHintBtn.textContent = "Hint";
+    guideCard.classList.remove("hidden");
+  }
+
+  function hideGuide() {
+    guideCard.classList.add("hidden");
+  }
+
+  function revealHint() {
+    const { hints, hintsRevealed } = state.guide;
+    if (hintsRevealed >= hints.length) return;
+    const item = document.createElement("div");
+    item.className = "hint-item";
+    item.textContent = `${hintsRevealed + 1}. ${hints[hintsRevealed]}`;
+    guideHints.appendChild(item);
+    state.guide.hintsRevealed += 1;
+    if (state.guide.hintsRevealed >= hints.length) {
+      guideHintBtn.textContent = "No more hints";
+      guideHintBtn.disabled = true;
+    }
+  }
+
   function startLevel(index) {
     clearBoard();
+    state.running = false;
+    document.getElementById("playBtn").textContent = "Play";
     state.mode = "arcade";
     modeSelect.value = "arcade";
     canvas.style.display = "block";
@@ -1871,6 +2095,12 @@
     state.score = 0;
     state.combo = 1;
     state.comboTimer = 0;
+    if (level.guide) {
+      showGuide(level.guide);
+    } else {
+      hideGuide();
+    }
+    draw();
     setOverlay(`${level.name}: ${level.vibe}`);
     setTimeout(() => setOverlay(""), 2800);
     updateHud();
@@ -2024,12 +2254,15 @@
     }
 
     levelSelect.addEventListener("change", () => {
-      state.levelIndex = Number(levelSelect.value);
+      startLevel(Number(levelSelect.value));
     });
 
     document.getElementById("startLevelBtn").addEventListener("click", () => {
       startLevel(Number(levelSelect.value));
     });
+
+    document.getElementById("guideClose").addEventListener("click", hideGuide);
+    guideHintBtn.addEventListener("click", revealHint);
   }
 
   function setupCanvasInput() {
