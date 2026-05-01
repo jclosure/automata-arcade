@@ -289,6 +289,128 @@ kbd {
   }
 }
 
+.tl-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: rgba(6, 15, 22, 0.91);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  backdrop-filter: blur(5px);
+  z-index: 8;
+  user-select: none;
+}
+
+.tl-btns {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.tl-btns button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 4px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color 0.1s, background 0.1s;
+}
+
+.tl-btns button:hover {
+  color: var(--ink);
+  background: rgba(218, 246, 255, 0.07);
+}
+
+.tl-btns button.tl-active {
+  color: var(--accent-2);
+}
+
+.tl-scrub {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tl-gen {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.tl-gen-r {
+  text-align: left;
+}
+
+.tl-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(218, 246, 255, 0.1);
+  border-radius: 2px;
+  position: relative;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.tl-track:hover .tl-thumb {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.tl-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: var(--accent-2);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.tl-thumb {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  background: var(--accent-2);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: transform 0.06s;
+}
+
+.tl-speed-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.tl-speed {
+  width: 66px;
+  accent-color: var(--accent-2);
+  cursor: pointer;
+}
+
+.tl-speed-lbl {
+  font-size: 0.76rem;
+  color: var(--accent-2);
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .guide-card {
   position: absolute;
   bottom: 14px;

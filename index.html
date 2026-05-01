@@ -73,6 +73,28 @@
           <canvas id="lifeCanvas"></canvas>
           <canvas id="sphereCanvas"></canvas>
           <div id="overlayMessage" class="overlay hidden"></div>
+          <div id="timelineBar" class="tl-bar">
+            <div class="tl-btns">
+              <button id="tlStart" title="Jump to start">⏮</button>
+              <button id="tlStepBack" title="Step backward">⏴</button>
+              <button id="tlRevPlay" title="Play backward">⏪</button>
+              <button id="tlPlayPause" title="Play / Pause">▶</button>
+              <button id="tlStepFwd" title="Step forward">⏵</button>
+              <button id="tlGoLive" title="Jump to live">⏭</button>
+            </div>
+            <div class="tl-scrub">
+              <span id="tlGenCur" class="tl-gen">0</span>
+              <div class="tl-track" id="tlTrack">
+                <div class="tl-progress" id="tlProgress"></div>
+                <div class="tl-thumb" id="tlThumb"></div>
+              </div>
+              <span id="tlGenMax" class="tl-gen tl-gen-r">0</span>
+            </div>
+            <div class="tl-speed-wrap">
+              <input id="tlSpeed" class="tl-speed" type="range" min="0" max="6" step="1" value="3" />
+              <span id="tlSpeedLabel" class="tl-speed-lbl">8×</span>
+            </div>
+          </div>
           <div id="guideCard" class="guide-card hidden">
             <div class="guide-header">
               <span id="guideConcept" class="guide-concept"></span>
@@ -93,7 +115,8 @@
           <h3>Shortcuts</h3>
           <ul>
             <li><kbd>Space</kbd> Play/Pause</li>
-            <li><kbd>N</kbd> Step</li>
+            <li><kbd>N</kbd> Step forward</li>
+            <li><kbd>B</kbd> Step backward</li>
             <li><kbd>C</kbd> Clear</li>
             <li><kbd>D</kbd> Demo</li>
             <li><kbd>R</kbd> Rotate 90°</li>
