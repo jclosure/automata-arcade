@@ -23,6 +23,15 @@
   const guideBody = document.getElementById("guideBody");
   const guideHints = document.getElementById("guideHints");
   const guideHintBtn = document.getElementById("guideHintBtn");
+  const tlTrack = document.getElementById("tlTrack");
+  const tlProgress = document.getElementById("tlProgress");
+  const tlThumb = document.getElementById("tlThumb");
+  const tlGenCur = document.getElementById("tlGenCur");
+  const tlGenMax = document.getElementById("tlGenMax");
+  const tlSpeed = document.getElementById("tlSpeed");
+  const tlSpeedLabel = document.getElementById("tlSpeedLabel");
+  const tlPlayPause = document.getElementById("tlPlayPause");
+  const tlRevPlay = document.getElementById("tlRevPlay");
 
   const state = {
     sharedState: true,
@@ -62,6 +71,9 @@
     tickCarry: 0,
     zoneFlash: [],
     guide: { hintsRevealed: 0, hints: [] },
+    histFrames: [],
+    histCursor: -1,
+    playReverse: false,
     sphereRotX: 0.4,
     sphereRotY: 0,
     sphereDrag: false,
@@ -75,6 +87,9 @@
 
   const SPHERE_COLS = 180;
   const SPHERE_ROWS = 90;
+  const MAX_HIST = 600;
+  const SPEED_TIERS = [1, 2, 4, 8, 15, 25, 30];
+  const SPEED_LABELS = ["1×", "2×", "4×", "8×", "15×", "25×", "30×"];
   let sphereThree = null;
   let manifoldThree = null;
   let _threeRenderer = null;
@@ -1108,6 +1123,9 @@
     state.comboTimer = 0;
     state.levelState = null;
     state.zoneFlash = [];
+    state.histFrames = [];
+    state.histCursor = -1;
+    state.playReverse = false;
     setOverlay("");
     hideGuide();
     updateHud();
@@ -1870,6 +1888,66 @@
     }
   }
 
+  // --- Time machine ---
+
+  function snapshotNow() {
+    if (state.histCursor < state.histFrames.length - 1) {
+      state.histFrames.splice(state.histCursor + 1);
+    }
+    state.histFrames.push({ gen: state.generation, alive: new Set(activeAlive()) });
+    if (state.histFrames.length > MAX_HIST) state.histFrames.shift();
+    state.histCursor = state.histFrames.length - 1;
+  }
+
+  function restoreFrame(idx) {
+    const frame = state.histFrames[idx];
+    if (!frame) return;
+    const copy = new Set(frame.alive);
+    if (state.sharedState) state.alive = copy;
+    else state.modeAlive[state.mode] = copy;
+    state.generation = frame.gen;
+    state.histCursor = idx;
+  }
+
+  function tickForward() {
+    stepLife();
+    snapshotNow();
+  }
+
+  function tickBackward() {
+    if (state.histCursor <= 0) {
+      syncPlayUI(false, false);
+      return;
+    }
+    restoreFrame(state.histCursor - 1);
+  }
+
+  function syncPlayUI(running, reverse) {
+    state.running = running;
+    state.playReverse = reverse;
+    document.getElementById("playBtn").textContent = running ? "Pause" : "Play";
+    tlPlayPause.textContent = (running && !reverse) ? "⏸" : "▶";
+    tlRevPlay.classList.toggle("tl-active", running && reverse);
+  }
+
+  function updateTimeline() {
+    const n = state.histFrames.length;
+    const cur = state.histCursor;
+    tlGenCur.textContent = String(state.generation);
+    if (n > 0) {
+      tlGenMax.textContent = String(state.histFrames[n - 1].gen);
+      const pct = n > 1 ? (Math.max(0, cur) / (n - 1)) * 100 : 100;
+      tlProgress.style.width = pct + "%";
+      tlThumb.style.left = pct + "%";
+    } else {
+      tlGenMax.textContent = "0";
+      tlProgress.style.width = "0%";
+      tlThumb.style.left = "0%";
+    }
+  }
+
+  // --- Main loop ---
+
   function runTick(now) {
     if (!runTick.last) runTick.last = now;
     const dt = (now - runTick.last) / 1000;
@@ -1879,7 +1957,8 @@
       state.tickCarry += dt;
       const stepInterval = 1 / state.stepsPerSecond;
       while (state.tickCarry >= stepInterval) {
-        stepLife();
+        if (state.playReverse) tickBackward();
+        else tickForward();
         state.tickCarry -= stepInterval;
       }
     }
@@ -1891,6 +1970,7 @@
     } else {
       draw();
     }
+    updateTimeline();
 
     updateHud();
     requestAnimationFrame(runTick);
@@ -1919,6 +1999,7 @@
     seedFromPattern("beacon", 92, 51);
     seedFromPattern("pinwheel-seed", 84, 41);
     seedFromPattern("spark-crab", 108, 49);
+    snapshotNow();
     setOverlay("Demo loaded: dual gun crossfire in the lab.");
     setTimeout(() => setOverlay(""), 2200);
   }
@@ -2079,8 +2160,7 @@
 
   function startLevel(index) {
     clearBoard();
-    state.running = false;
-    document.getElementById("playBtn").textContent = "Play";
+    syncPlayUI(false, false);
     state.mode = "arcade";
     modeSelect.value = "arcade";
     canvas.style.display = "block";
@@ -2100,6 +2180,7 @@
     } else {
       hideGuide();
     }
+    snapshotNow();
     draw();
     setOverlay(`${level.name}: ${level.vibe}`);
     setTimeout(() => setOverlay(""), 2800);
@@ -2179,12 +2260,12 @@
 
   function setupControls() {
     document.getElementById("playBtn").addEventListener("click", () => {
-      state.running = !state.running;
-      document.getElementById("playBtn").textContent = state.running ? "Pause" : "Play";
+      syncPlayUI(!state.running, false);
     });
 
     document.getElementById("stepBtn").addEventListener("click", () => {
-      stepLife();
+      syncPlayUI(false, false);
+      tickForward();
       if (state.mode === "sphere" && sphereThree) renderSphere();
       else if (is3DMode() && manifoldThree) renderManifold();
       else draw();
@@ -2193,6 +2274,7 @@
 
     document.getElementById("clearBtn").addEventListener("click", () => {
       clearBoard();
+      snapshotNow();
     });
 
     document.getElementById("demoBtn").addEventListener("click", () => {
@@ -2202,6 +2284,10 @@
     speedInput.addEventListener("input", () => {
       state.stepsPerSecond = Number(speedInput.value);
       speedOut.textContent = String(state.stepsPerSecond);
+      const closest = SPEED_TIERS.reduce((best, v, i) =>
+        Math.abs(v - state.stepsPerSecond) < Math.abs(SPEED_TIERS[best] - state.stepsPerSecond) ? i : best, 0);
+      tlSpeed.value = String(closest);
+      tlSpeedLabel.textContent = SPEED_LABELS[closest];
     });
 
     modeSelect.addEventListener("change", () => {
@@ -2302,8 +2388,7 @@
     window.addEventListener("keydown", (ev) => {
       if (ev.code === "Space") {
         if (!state.keys.spaceDown) {
-          state.running = !state.running;
-          document.getElementById("playBtn").textContent = state.running ? "Pause" : "Play";
+          syncPlayUI(!state.running, false);
         }
         state.keys.spaceDown = true;
         ev.preventDefault();
@@ -2315,12 +2400,20 @@
       }
 
       if (ev.key.toLowerCase() === "n") {
-        stepLife();
+        syncPlayUI(false, false);
+        tickForward();
+        if (state.mode === "sphere" && sphereThree) renderSphere();
+        else if (is3DMode() && manifoldThree) renderManifold();
+        updateHud();
+      } else if (ev.key.toLowerCase() === "b") {
+        syncPlayUI(false, false);
+        tickBackward();
         if (state.mode === "sphere" && sphereThree) renderSphere();
         else if (is3DMode() && manifoldThree) renderManifold();
         updateHud();
       } else if (ev.key.toLowerCase() === "c") {
         clearBoard();
+        snapshotNow();
       } else if (ev.key.toLowerCase() === "d") {
         loadDemo();
       } else if (ev.key.toLowerCase() === "r") {
@@ -2368,10 +2461,103 @@
     });
   }
 
+  function setupTimeline() {
+    // Speed tier slider — initialised at index 3 (8×), matching HTML default value="3"
+    state.stepsPerSecond = SPEED_TIERS[3];
+
+    tlSpeed.addEventListener("input", () => {
+      const tier = Number(tlSpeed.value);
+      state.stepsPerSecond = SPEED_TIERS[tier];
+      tlSpeedLabel.textContent = SPEED_LABELS[tier];
+      speedOut.textContent = String(SPEED_TIERS[tier]);
+    });
+
+    // Forward play / pause
+    tlPlayPause.addEventListener("click", () => {
+      syncPlayUI(!state.running || state.playReverse, false);
+    });
+
+    // Reverse play
+    tlRevPlay.addEventListener("click", () => {
+      if (state.histFrames.length <= 1) return;
+      const goingReverse = !(state.running && state.playReverse);
+      syncPlayUI(goingReverse, goingReverse);
+    });
+
+    // Step backward
+    document.getElementById("tlStepBack").addEventListener("click", () => {
+      syncPlayUI(false, false);
+      tickBackward();
+      if (state.mode === "sphere" && sphereThree) renderSphere();
+      else if (is3DMode() && manifoldThree) renderManifold();
+      else draw();
+      updateHud();
+    });
+
+    // Step forward
+    document.getElementById("tlStepFwd").addEventListener("click", () => {
+      syncPlayUI(false, false);
+      tickForward();
+      if (state.mode === "sphere" && sphereThree) renderSphere();
+      else if (is3DMode() && manifoldThree) renderManifold();
+      else draw();
+      updateHud();
+    });
+
+    // Jump to history start
+    document.getElementById("tlStart").addEventListener("click", () => {
+      syncPlayUI(false, false);
+      if (state.histFrames.length > 0) restoreFrame(0);
+      if (state.mode === "sphere" && sphereThree) renderSphere();
+      else if (is3DMode() && manifoldThree) renderManifold();
+      else draw();
+      updateHud();
+    });
+
+    // Jump to live (latest frame)
+    document.getElementById("tlGoLive").addEventListener("click", () => {
+      syncPlayUI(false, false);
+      if (state.histFrames.length > 0) restoreFrame(state.histFrames.length - 1);
+      if (state.mode === "sphere" && sphereThree) renderSphere();
+      else if (is3DMode() && manifoldThree) renderManifold();
+      else draw();
+      updateHud();
+    });
+
+    // Scrubber drag
+    let scrubbing = false;
+
+    function scrubToX(clientX) {
+      const rect = tlTrack.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const idx = Math.round(frac * (state.histFrames.length - 1));
+      if (state.histFrames.length > 0) {
+        syncPlayUI(false, false);
+        restoreFrame(idx);
+        if (state.mode === "sphere" && sphereThree) renderSphere();
+        else if (is3DMode() && manifoldThree) renderManifold();
+        else draw();
+        updateHud();
+      }
+    }
+
+    tlTrack.addEventListener("pointerdown", (e) => {
+      scrubbing = true;
+      tlTrack.setPointerCapture(e.pointerId);
+      scrubToX(e.clientX);
+      e.preventDefault();
+    });
+    tlTrack.addEventListener("pointermove", (e) => {
+      if (scrubbing) scrubToX(e.clientX);
+    });
+    tlTrack.addEventListener("pointerup", () => { scrubbing = false; });
+  }
+
   function init() {
     setupControls();
     setupCanvasInput();
     setupShortcuts();
+    setupTimeline();
     buildPalette();
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
