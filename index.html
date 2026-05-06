@@ -40,6 +40,12 @@
               <option value="klein">Klein Bottle</option>
               <option value="mobius">Möbius Strip</option>
               <option value="cylinder">Cylinder</option>
+              <optgroup label="── Shader Engine ──">
+                <option value="lenia">Lenia</option>
+                <option value="smoothlife">SmoothLife</option>
+                <option value="gray-scott">Gray-Scott</option>
+                <option value="lenia-mc2">Lenia 2-species</option>
+              </optgroup>
             </select>
           </label>
           <label class="level-wrap">Level
@@ -73,7 +79,7 @@
       <main class="workspace">
         <aside class="panel palette" id="palettePanel">
           <h2>Prefab Palette</h2>
-          <p>Drag cards onto the board.</p>
+          <input id="paletteSearch" class="palette-search" type="search" placeholder="Filter patterns…" autocomplete="off" />
           <div id="paletteList" class="palette-list"></div>
         </aside>
 
@@ -116,6 +122,91 @@
 
         <aside class="panel inspector" id="inspectorPanel">
           <h2>Inspector</h2>
+
+          <!-- GPU Shader Engine panel — shown only in GPU modes -->
+          <div id="asfPanel" class="asf-panel" style="display:none">
+            <div class="asf-header">
+              <span id="asfModeName" class="asf-mode-name">Lenia</span>
+              <span class="asf-badge">GPU</span>
+            </div>
+
+            <div class="asf-section">
+              <div class="asf-section-title">World</div>
+              <button id="asfRandomizeBtn" class="asf-btn">Randomize</button>
+              <button id="asfClearBtn" class="asf-btn">Clear</button>
+              <label class="asf-row">
+                <span>Density</span>
+                <input id="asfDensity" type="range" min="0.02" max="0.6" step="0.01" value="0.15" class="asf-slider" />
+                <span id="asfDensityOut" class="asf-val">0.15</span>
+              </label>
+            </div>
+
+            <div class="asf-section" id="asfLeniaSection">
+              <div class="asf-section-title">Growth</div>
+              <label class="asf-row">
+                <span title="Target neighborhood density for growth">μ (mu)</span>
+                <input id="asfMu" type="range" min="0.01" max="0.5" step="0.001" value="0.135" class="asf-slider" />
+                <span id="asfMuOut" class="asf-val">0.135</span>
+              </label>
+              <label class="asf-row">
+                <span title="Width of the growth bell curve">σ (sigma)</span>
+                <input id="asfSigma" type="range" min="0.001" max="0.1" step="0.0005" value="0.015" class="asf-slider" />
+                <span id="asfSigmaOut" class="asf-val">0.015</span>
+              </label>
+              <label class="asf-row">
+                <span title="Time step — smaller = smoother, larger = faster">dt</span>
+                <input id="asfDt" type="range" min="0.01" max="1.0" step="0.005" value="0.1" class="asf-slider" />
+                <span id="asfDtOut" class="asf-val">0.1</span>
+              </label>
+            </div>
+
+            <div class="asf-section" id="asfGsSection" style="display:none">
+              <div class="asf-section-title">Reaction-Diffusion</div>
+              <label class="asf-row">
+                <span title="Feed rate — how fast A is replenished">F</span>
+                <input id="asfF" type="range" min="0.01" max="0.1" step="0.0005" value="0.0545" class="asf-slider" />
+                <span id="asfFOut" class="asf-val">0.0545</span>
+              </label>
+              <label class="asf-row">
+                <span title="Kill rate — how fast B is consumed">k</span>
+                <input id="asfK" type="range" min="0.04" max="0.075" step="0.0005" value="0.0620" class="asf-slider" />
+                <span id="asfKOut" class="asf-val">0.0620</span>
+              </label>
+              <div class="asf-gs-presets">
+                <button class="asf-gs-preset" data-f="0.0545" data-k="0.0620" title="Coral/fingerprint">Coral</button>
+                <button class="asf-gs-preset" data-f="0.0367" data-k="0.0649" title="Replicating spots">Mitosis</button>
+                <button class="asf-gs-preset" data-f="0.029"  data-k="0.057"  title="Maze channels">Maze</button>
+                <button class="asf-gs-preset" data-f="0.039"  data-k="0.058"  title="Pulse waves">Pulse</button>
+                <button class="asf-gs-preset" data-f="0.014"  data-k="0.054"  title="Soliton gliders">Soliton</button>
+                <button class="asf-gs-preset" data-f="0.025"  data-k="0.060"  title="Worms">Worms</button>
+              </div>
+            </div>
+
+            <div class="asf-section">
+              <div class="asf-section-title">Display</div>
+              <label class="asf-row">
+                <span>Colormap</span>
+                <select id="asfColormap" class="asf-select">
+                  <option value="ocean" selected>Ocean (default)</option>
+                  <option value="viridis">Viridis</option>
+                  <option value="plasma">Plasma</option>
+                  <option value="magma">Magma</option>
+                  <option value="twilight">Twilight</option>
+                  <option value="grayscale">Grayscale</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="asf-section">
+              <div class="asf-section-title">Creatures</div>
+              <div id="asfCreatureList" class="asf-creature-list"></div>
+            </div>
+
+            <div class="asf-info">
+              <span id="asfStatus">GPU active</span>
+            </div>
+          </div>
+
           <div id="inspectorBody">
             <p>Select a prefab card to inspect details.</p>
           </div>
@@ -515,6 +606,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+    <script src="gpu/asf.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

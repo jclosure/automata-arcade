@@ -232,6 +232,21 @@ button:hover {
   color: var(--muted);
 }
 
+.palette-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 0.82rem;
+  padding: 5px 8px;
+  margin-bottom: 8px;
+  outline: none;
+}
+.palette-search:focus { border-color: var(--accent); }
+.palette-search::-webkit-search-cancel-button { cursor: pointer; }
+
 .palette-section-hdr {
   font-size: 0.72rem;
   font-weight: 700;
@@ -241,6 +256,19 @@ button:hover {
   padding: 6px 2px 2px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 2px;
+}
+.palette-section-hdr--sub {
+  font-size: 0.65rem;
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  border-bottom-color: transparent;
+  padding-top: 10px;
+  margin-bottom: 0;
+}
+.palette-empty {
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-align: center;
+  padding: 16px 0;
 }
 
 .palette-card-head {
@@ -1403,3 +1431,153 @@ kbd {
   color: var(--danger);
 }
 .scene-stop-btn:hover { background: rgba(255,107,107,0.2); }
+
+/* ─── ASF (Automata Shader Framework) panel ──────────────────────────────── */
+
+.asf-panel {
+  padding: 0 0 8px;
+  font-size: 0.82rem;
+}
+
+.asf-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+
+.asf-mode-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--accent);
+  flex: 1;
+}
+
+.asf-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: var(--accent);
+  color: #0a1a2e;
+  border-radius: 4px;
+  padding: 2px 5px;
+  letter-spacing: 0.05em;
+}
+
+.asf-section {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.asf-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.asf-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  cursor: default;
+}
+
+.asf-row span:first-child {
+  min-width: 52px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.asf-slider {
+  flex: 1;
+  height: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.asf-val {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  min-width: 40px;
+  text-align: right;
+}
+
+.asf-select {
+  flex: 1;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--fg);
+  font-size: 0.78rem;
+  padding: 3px 5px;
+}
+
+.asf-btn {
+  flex: 1;
+  background: rgba(91,224,188,0.12);
+  border: 1px solid rgba(91,224,188,0.3);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 0.76rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  margin-right: 4px;
+  transition: background 0.15s;
+}
+.asf-btn:hover { background: rgba(91,224,188,0.22); }
+
+.asf-gs-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.asf-gs-preset {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--fg);
+  font-size: 0.72rem;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.asf-gs-preset:hover { border-color: var(--accent); color: var(--accent); }
+
+.asf-creature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.asf-creature-btn {
+  background: rgba(0,0,0,0.15);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--fg);
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+.asf-creature-btn:hover {
+  border-color: var(--accent);
+  background: rgba(91,224,188,0.08);
+}
+
+.asf-info {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: center;
+}
