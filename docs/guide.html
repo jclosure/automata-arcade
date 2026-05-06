@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Automata Arcade — Field Guide</title>
+<style>
+/* ─── Reset & Base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:      #07121a;
+  --bg2:     #0f2231;
+  --panel:   #122d40;
+  --panel2:  #183b52;
+  --ink:     #daf6ff;
+  --muted:   #9dc5d2;
+  --accent:  #f2b84b;
+  --teal:    #5be0bc;
+  --danger:  #ff6b6b;
+  --purple:  #9b7be8;
+  --line:    rgba(218,246,255,0.13);
+  --r:       12px;
+}
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Trebuchet MS","Segoe UI",system-ui,sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+}
+a { color: var(--teal); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img { max-width: 100%; border-radius: var(--r); display: block; }
+h1,h2,h3,h4 { line-height: 1.25; }
+
+/* ─── Layout ─────────────────────────────────────────────────────────────────── */
+.container { max-width: 1100px; margin: 0 auto; padding: 0 28px; }
+.section    { padding: 80px 0; }
+.section + .section { border-top: 1px solid var(--line); }
+
+/* ─── Nav ────────────────────────────────────────────────────────────────────── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(7,18,26,0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+  padding: 0 28px;
+}
+.nav-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; align-items: center; gap: 0;
+  height: 52px;
+}
+.nav-brand {
+  font-size: 0.88rem; font-weight: 700;
+  color: var(--teal); letter-spacing: 0.08em;
+  margin-right: 32px; white-space: nowrap;
+}
+.nav-links {
+  display: flex; gap: 0; flex-wrap: nowrap; overflow-x: auto;
+  list-style: none; scrollbar-width: none;
+}
+.nav-links::-webkit-scrollbar { display: none; }
+.nav-links a {
+  display: block; padding: 0 14px; height: 52px;
+  line-height: 52px; font-size: 0.78rem;
+  color: var(--muted); white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.nav-links a:hover { color: var(--ink); text-decoration: none; border-color: var(--teal); }
+
+/* ─── Hero ───────────────────────────────────────────────────────────────────── */
+.hero {
+  min-height: 480px;
+  background:
+    radial-gradient(ellipse 900px 500px at 20% 40%, rgba(91,224,188,0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 700px 600px at 85% 70%, rgba(155,123,232,0.06) 0%, transparent 70%),
+    linear-gradient(160deg, #091c2c, #07121a 60%);
+  display: flex; align-items: center;
+  padding: 80px 28px;
+}
+.hero-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 60px; align-items: center;
+}
+.hero-eyebrow {
+  font-size: 0.72rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--teal);
+  margin-bottom: 12px;
+}
+.hero h1 {
+  font-size: clamp(2.2rem, 4vw, 3.4rem);
+  color: var(--ink); margin-bottom: 18px;
+  background: linear-gradient(135deg, #daf6ff 40%, #5be0bc);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.hero-sub {
+  font-size: 1.12rem; color: var(--muted);
+  line-height: 1.7; margin-bottom: 28px;
+}
+.hero-badges { display: flex; gap: 10px; flex-wrap: wrap; }
+.badge {
+  display: inline-block; padding: 5px 12px;
+  border: 1px solid var(--line); border-radius: 20px;
+  font-size: 0.75rem; color: var(--muted);
+  background: rgba(255,255,255,0.04);
+}
+.hero-img-wrap {
+  position: relative;
+}
+.hero-img-wrap img { border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
+
+/* ─── Annotated Screenshot ───────────────────────────────────────────────────── */
+.annotated {
+  position: relative; display: inline-block; width: 100%;
+}
+.annotated img { width: 100%; border-radius: var(--r); box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+.ann {
+  position: absolute;
+  display: flex; align-items: center; gap: 7px;
+  background: rgba(7,18,26,0.9);
+  border: 1px solid var(--teal);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 0.72rem; color: var(--teal);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ann-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--teal); flex-shrink: 0;
+}
+.ann.accent  { border-color: var(--accent); color: var(--accent); }
+.ann.accent  .ann-dot { background: var(--accent); }
+.ann.purple  { border-color: var(--purple); color: var(--purple); }
+.ann.purple  .ann-dot { background: var(--purple); }
+.ann.danger  { border-color: var(--danger); color: var(--danger); }
+.ann.danger  .ann-dot { background: var(--danger); }
+
+/* connector line using pseudo-element */
+.ann::before {
+  content: '';
+  position: absolute;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+/* ─── Section Headers ────────────────────────────────────────────────────────── */
+.section-header { margin-bottom: 48px; }
+.section-eyebrow {
+  font-size: 0.68rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--teal);
+  margin-bottom: 8px;
+}
+.section-header h2 {
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+  color: var(--ink); margin-bottom: 14px;
+}
+.section-header p {
+  font-size: 1.05rem; color: var(--muted);
+  max-width: 620px; line-height: 1.7;
+}
+
+/* ─── Two-col layout ─────────────────────────────────────────────────────────── */
+.two-col {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 48px; align-items: start;
+}
+.two-col.flip > *:first-child { order: 2; }
+.two-col.flip > *:last-child  { order: 1; }
+@media (max-width: 760px) {
+  .two-col { grid-template-columns: 1fr; }
+  .two-col.flip > * { order: unset; }
+  .hero-inner { grid-template-columns: 1fr; }
+}
+
+/* ─── Cards ──────────────────────────────────────────────────────────────────── */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 22px 20px;
+}
+.card-icon { font-size: 1.6rem; margin-bottom: 12px; }
+.card h3 { font-size: 0.95rem; color: var(--ink); margin-bottom: 6px; }
+.card p  { font-size: 0.82rem; color: var(--muted); line-height: 1.6; }
+.card .card-key {
+  display: inline-block; margin-top: 10px;
+  font-family: monospace; font-size: 0.72rem;
+  background: rgba(0,0,0,0.4); border: 1px solid var(--line);
+  border-radius: 5px; padding: 2px 7px; color: var(--accent);
+}
+
+/* ─── Callouts ───────────────────────────────────────────────────────────────── */
+.callout {
+  border-radius: var(--r);
+  padding: 20px 22px;
+  border-left: 4px solid var(--teal);
+  background: rgba(91,224,188,0.06);
+  margin: 24px 0;
+}
+.callout.warn  { border-color: var(--accent); background: rgba(242,184,75,0.06); }
+.callout.tip   { border-color: var(--purple); background: rgba(155,123,232,0.06); }
+.callout-title { font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--teal); margin-bottom: 6px; font-weight: 700; }
+.callout.warn  .callout-title { color: var(--accent); }
+.callout.tip   .callout-title { color: var(--purple); }
+.callout p { font-size: 0.88rem; color: var(--muted); line-height: 1.65; }
+
+/* ─── Steps ──────────────────────────────────────────────────────────────────── */
+.steps { display: flex; flex-direction: column; gap: 0; }
+.step {
+  display: grid; grid-template-columns: 44px 1fr;
+  gap: 16px; align-items: start;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.step:last-child { border-bottom: none; }
+.step-num {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(91,224,188,0.2), rgba(91,224,188,0.08));
+  border: 1px solid rgba(91,224,188,0.35);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.82rem; font-weight: 700; color: var(--teal);
+  flex-shrink: 0; margin-top: 2px;
+}
+.step-body h4 { font-size: 0.95rem; color: var(--ink); margin-bottom: 5px; }
+.step-body p  { font-size: 0.85rem; color: var(--muted); line-height: 1.6; }
+.step-body code {
+  font-family: monospace; font-size: 0.8rem;
+  background: rgba(0,0,0,0.4); border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 6px; color: var(--accent);
+}
+
+/* ─── Tutorial Blocks ────────────────────────────────────────────────────────── */
+.tutorial {
+  background: linear-gradient(135deg, rgba(18,45,64,0.8), rgba(12,30,44,0.8));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px 36px;
+  margin: 28px 0;
+}
+.tutorial-label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 0.68rem; letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 14px;
+}
+.tutorial-label::before {
+  content: '';
+  display: block; width: 24px; height: 2px;
+  background: var(--accent);
+}
+.tutorial h3 { font-size: 1.15rem; color: var(--ink); margin-bottom: 10px; }
+.tutorial > p { font-size: 0.9rem; color: var(--muted); margin-bottom: 22px; line-height: 1.65; }
+.tutorial .steps { margin-top: 0; }
+
+/* ─── Key Reference ──────────────────────────────────────────────────────────── */
+.key-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.key-table th {
+  text-align: left; padding: 8px 12px;
+  font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.key-table td { padding: 9px 12px; border-bottom: 1px solid rgba(218,246,255,0.05); color: var(--muted); }
+.key-table tr:last-child td { border-bottom: none; }
+.key-table tr:hover td { background: rgba(255,255,255,0.02); }
+kbd {
+  font-family: monospace; font-size: 0.8rem;
+  background: rgba(0,0,0,0.45); border: 1px solid var(--line);
+  border-radius: 5px; padding: 2px 8px; color: var(--ink);
+  white-space: nowrap;
+}
+.key-action { color: var(--ink); }
+
+/* ─── Feature highlight ──────────────────────────────────────────────────────── */
+.feature-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 40px; align-items: center; margin: 48px 0;
+}
+.feature-row.flip > *:first-child { order: 2; }
+.feature-row.flip > *:last-child  { order: 1; }
+@media (max-width: 760px) {
+  .feature-row { grid-template-columns: 1fr; }
+  .feature-row.flip > * { order: unset; }
+}
+.feature-text h3 { font-size: 1.35rem; color: var(--ink); margin-bottom: 12px; }
+.feature-text p  { font-size: 0.9rem; color: var(--muted); line-height: 1.7; margin-bottom: 14px; }
+.feature-text ul { padding-left: 18px; }
+.feature-text li { font-size: 0.88rem; color: var(--muted); margin-bottom: 7px; line-height: 1.6; }
+.feature-text li strong { color: var(--ink); }
+
+/* ─── Screenshot caption ─────────────────────────────────────────────────────── */
+.screen-wrap { position: relative; }
+.screen-wrap img { border-radius: var(--r); box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+.caption {
+  font-size: 0.74rem; color: var(--muted);
+  text-align: center; margin-top: 10px;
+  font-style: italic;
+}
+
+/* ─── Notebook feature showcase ─────────────────────────────────────────────── */
+.nb-showcase {
+  background: linear-gradient(160deg, rgba(13,38,56,0.9), rgba(9,28,44,0.9));
+  border: 1px solid rgba(91,224,188,0.2);
+  border-radius: 18px; padding: 48px;
+  margin: 48px 0;
+}
+.nb-showcase-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 48px; align-items: start;
+}
+@media (max-width: 760px) { .nb-showcase-grid { grid-template-columns: 1fr; } }
+
+/* ─── Pill labels ────────────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.7rem; padding: 3px 10px;
+  border-radius: 12px; font-weight: 700;
+  letter-spacing: 0.05em; white-space: nowrap;
+}
+.pill.teal   { background: rgba(91,224,188,0.12); color: var(--teal); border: 1px solid rgba(91,224,188,0.3); }
+.pill.amber  { background: rgba(242,184,75,0.12);  color: var(--accent); border: 1px solid rgba(242,184,75,0.3); }
+.pill.purple { background: rgba(155,123,232,0.12); color: var(--purple); border: 1px solid rgba(155,123,232,0.3); }
+.pill.red    { background: rgba(255,107,107,0.12); color: var(--danger); border: 1px solid rgba(255,107,107,0.3); }
+.pill.new    { background: rgba(91,224,188,0.18); color: var(--teal); border: 1px solid var(--teal); }
+
+/* ─── Concept box ────────────────────────────────────────────────────────────── */
+.concept {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 24px 26px;
+}
+.concept h4 { font-size: 0.82rem; color: var(--teal); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+.concept p  { font-size: 0.86rem; color: var(--muted); line-height: 1.65; }
+
+/* ─── Big stat ───────────────────────────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin: 40px 0; }
+@media (max-width: 640px) { .stat-grid { grid-template-columns: repeat(2,1fr); } }
+.stat {
+  text-align: center; padding: 22px 12px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.stat-num { font-size: 2rem; font-weight: 700; color: var(--teal); display: block; }
+.stat-label { font-size: 0.74rem; color: var(--muted); margin-top: 4px; }
+
+/* ─── Footer ─────────────────────────────────────────────────────────────────── */
+footer {
+  border-top: 1px solid var(--line);
+  padding: 48px 28px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+footer a { color: var(--teal); }
+
+/* ─── Divider ────────────────────────────────────────────────────────────────── */
+.divider { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
+
+/* ─── Inline screenshot label ────────────────────────────────────────────────── */
+.label-box {
+  display: inline-block;
+  background: rgba(7,18,26,0.88);
+  border: 1px solid var(--teal);
+  border-radius: 6px; padding: 3px 9px;
+  font-size: 0.7rem; color: var(--teal);
+  font-weight: 700; letter-spacing: 0.06em;
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <span class="nav-brand">📓 AUTOMATA ARCADE</span>
+    <ul class="nav-links">
+      <li><a href="#what">What is this?</a></li>
+      <li><a href="#first5">First 5 Minutes</a></li>
+      <li><a href="#board">The Board</a></li>
+      <li><a href="#modes">Canvas Modes</a></li>
+      <li><a href="#prefabs">Prefabs</a></li>
+      <li><a href="#timemachine">Time Machine</a></li>
+      <li><a href="#notebook">Notebook</a></li>
+      <li><a href="#arcade">Arcade</a></li>
+      <li><a href="#academy">Circuit Academy</a></li>
+      <li><a href="#3d">3D Worlds</a></li>
+      <li><a href="#tutorials">Tutorials</a></li>
+      <li><a href="#tips">Best Results</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-inner">
+    <div>
+      <div class="hero-eyebrow">Field Guide — v1.0</div>
+      <h1>Tools of a God.<br>For the Curious.</h1>
+      <p class="hero-sub">
+        Automata Arcade puts Conway's Game of Life in your hands as a living laboratory.
+        Draw cells, drop patterns, rewind time, document discoveries, and watch simple rules
+        produce complex, beautiful, surprising worlds — all in your browser, with no setup.
+      </p>
+      <div class="hero-badges">
+        <span class="badge">No install needed</span>
+        <span class="badge">Runs in browser</span>
+        <span class="badge">Zero prior knowledge required</span>
+        <span class="badge">Beginner → Expert</span>
+      </div>
+    </div>
+    <div class="hero-img-wrap">
+      <img src="media/screens/01-overview.png" alt="Automata Arcade overview" />
+    </div>
+  </div>
+</section>
+
+<!-- WHAT IS THIS -->
+<section class="section" id="what">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">The Idea</div>
+    <h2>What exactly is happening here?</h2>
+    <p>Every cell on the board is alive or dead. Every generation, each cell looks at its eight neighbours and follows one rule: three neighbours = be born, two or three = survive, anything else = die. That's it. That's the entire physics of this universe.</p>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="concept">
+        <h4>The Three-sentence explanation</h4>
+        <p>You're watching a universe run on three simple rules. Those rules produce gliders, guns, computers, even digital life forms. Your job is to experiment, break things, and document what you find.</p>
+      </div>
+      <br>
+      <div class="concept">
+        <h4>Why does any of this matter?</h4>
+        <p>Conway's Game of Life is Turing-complete — meaning it can, in principle, compute anything a regular computer can. Scientists use it to study emergence, evolution, and self-organization. You can use it to just have fun watching things explode.</p>
+      </div>
+      <br>
+      <div class="callout">
+        <div class="callout-title">No experience needed</div>
+        <p>You don't need to know anything about cellular automata, computation, or mathematics. Start by clicking cells and pressing Play. Curiosity is the only prerequisite.</p>
+      </div>
+    </div>
+    <div>
+      <div class="stat-grid" style="grid-template-columns: repeat(2,1fr); margin: 0 0 18px;">
+        <div class="stat"><span class="stat-num">30+</span><span class="stat-label">drag-and-drop patterns</span></div>
+        <div class="stat"><span class="stat-num">12</span><span class="stat-label">guided missions</span></div>
+        <div class="stat"><span class="stat-num">600</span><span class="stat-label">generations of history</span></div>
+        <div class="stat"><span class="stat-num">5</span><span class="stat-label">3D surfaces</span></div>
+      </div>
+      <img src="../media/what-is-it.png" alt="What is Automata Arcade" style="border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- FIRST 5 MINUTES -->
+<section class="section" id="first5">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Quick Start</div>
+    <h2>Your first five minutes</h2>
+    <p>Follow these five experiments in order. By the end you'll have seen the core magic and be ready to explore on your own.</p>
+  </div>
+
+  <div class="two-col">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Press Load Demo</h4>
+          <p>The <kbd>Load Demo</kbd> button sets up a live crossfire between two Gosper Glider Guns. Press <kbd>Play</kbd> (or the spacebar) and watch. Two streams of gliders are heading toward each other — you've just loaded a NOT gate.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Rewind to the beginning</h4>
+          <p>Hit the <kbd>⏮</kbd> button at the bottom of the screen. The board snaps back to generation 0. Now drag the scrubber slowly to the right and watch the collision replay frame by frame.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Draw something</h4>
+          <p>Make sure <kbd>✏ Paint</kbd> mode is selected (top bar). Left-click and drag anywhere on the dark grid to paint new cells. Press Play and watch your cells interact with the existing patterns.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>Drop a prefab</h4>
+          <p>In the <strong>Prefab Palette</strong> on the left, drag any card — try the <strong>Glider</strong> — directly onto the board. Release to drop it. Press Play and watch it sail across the canvas.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h4>Save a discovery to the Notebook</h4>
+          <p>Click the <kbd>📓 Notebook</kbd> button in the top bar. Click <kbd>+ Entry</kbd>, type a title like "First run", tick <strong>Snapshot board</strong>, and click <kbd>Save Entry</kbd>. That moment is now preserved forever.</p>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="screen-wrap">
+        <img src="media/screens/01-overview.png" alt="Full app on launch with demo loaded" />
+        <p class="caption">The full interface on launch. Controls top-left, canvas centre, inspector right.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- THE BOARD -->
+<section class="section" id="board">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Controls</div>
+    <h2>Navigating the board</h2>
+    <p>The main canvas is an infinite, zoomable 2D grid. Everything happens here.</p>
+  </div>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-icon">🖱️</div>
+      <h3>Scroll wheel</h3>
+      <p>Zooms in and out, anchored to wherever your mouse is sitting. Zoom in close to see individual cell births. Zoom out to see the whole population at once.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">✋</div>
+      <h3>Move mode (M)</h3>
+      <p>Press <kbd>M</kbd> or click <kbd>✥ Move</kbd> to enter pan mode. Then click-and-drag anywhere to scroll around the infinite grid. Middle-mouse also pans in any mode.</p>
+      <span class="card-key">M</span>
+    </div>
+    <div class="card">
+      <div class="card-icon">✏️</div>
+      <h3>Paint mode (P)</h3>
+      <p>Left-click paints cells alive. Right-click erases them. Hold and drag to paint or erase in a stroke. This is the default mode when you open the app.</p>
+      <span class="card-key">P</span>
+    </div>
+    <div class="card">
+      <div class="card-icon">Space</div>
+      <h3>Play / Pause</h3>
+      <p>Spacebar toggles the simulation. While paused you can draw, drop prefabs, or examine the board at leisure without anything changing.</p>
+      <span class="card-key">Space</span>
+    </div>
+    <div class="card">
+      <div class="card-icon">⬚</div>
+      <h3>Select mode (S)</h3>
+      <p>Draw a rectangle around any region of the board. Then drag to move it, press Delete to erase it, or use Ctrl+C / Ctrl+X / Ctrl+V to copy, cut, and paste.</p>
+      <span class="card-key">S</span>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔢</div>
+      <h3>Step by step</h3>
+      <p>Press <kbd>N</kbd> to advance exactly one generation forward. Press <kbd>B</kbd> to go one generation backward. Perfect for studying a specific moment in slow motion.</p>
+      <span class="card-key">N / B</span>
+    </div>
+  </div>
+
+  <div class="callout warn" style="margin-top:32px">
+    <div class="callout-title">Quick tip — Esc clears your mode</div>
+    <p>At any time, pressing <kbd>Esc</kbd> drops you back into plain Paint mode and clears any active selection. Useful if you've lost track of which mode you're in.</p>
+  </div>
+</div>
+</section>
+
+<!-- CANVAS MODES -->
+<section class="section" id="modes">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Interaction Modes</div>
+    <h2>Four canvas modes</h2>
+    <p>The toolbar in the top bar switches how your mouse interacts with the board. Each mode is designed for a specific kind of work.</p>
+  </div>
+
+  <div class="screen-wrap" style="margin-bottom: 36px;">
+    <img src="media/screens/08-mode-toolbar.png" alt="Mode toolbar" />
+    <p class="caption">The mode toolbar lives in the controls row. The active mode is highlighted in amber.</p>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <table class="key-table">
+        <thead><tr><th>Mode</th><th>Key</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill teal">✏ Paint</span></td><td><kbd>P</kbd></td><td class="key-action">Left=draw, Right=erase. The default.</td></tr>
+          <tr><td><span class="pill amber">✥ Move</span></td><td><kbd>M</kbd></td><td class="key-action">Click-drag pans the camera around the grid.</td></tr>
+          <tr><td><span class="pill purple">⬚ Select</span></td><td><kbd>S</kbd></td><td class="key-action">Drag to select a rectangle, then drag the selection to move it.</td></tr>
+          <tr><td><span class="pill red">⊛ Force</span></td><td><kbd>V</kbd></td><td class="key-action">Paints invisible force fields — attract or repel cells.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="callout tip">
+        <div class="callout-title">Selection power-moves</div>
+        <p>Once you've drawn a selection rectangle, the real power kicks in:<br><br>
+        <kbd>Del</kbd> — wipe everything inside the selection<br>
+        <kbd>Ctrl+C</kbd> — copy the selection's cells<br>
+        <kbd>Ctrl+X</kbd> — cut and lift the selection<br>
+        <kbd>Ctrl+V</kbd> — paste at your cursor position<br><br>
+        These all work while the simulation is running — you can rearrange a living board in real time.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- PREFAB PALETTE -->
+<section class="section" id="prefabs">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Pattern Library</div>
+    <h2>The Prefab Palette</h2>
+    <p>The left sidebar contains 30+ ready-made patterns — from simple gliders to complete circuit components. Drag any card directly onto the board.</p>
+  </div>
+
+  <div class="feature-row">
+    <div class="screen-wrap">
+      <img src="media/screens/15-palette.png" alt="Prefab Palette" />
+      <p class="caption">The full palette. Cards are grouped into Required, Custom, and Circuit categories.</p>
+    </div>
+    <div class="feature-text">
+      <h3>Drag, rotate, drop</h3>
+      <p>Every pattern in the palette can be oriented before you drop it. Use the <strong>Rotate</strong> selector in the controls row to spin it 0°, 90°, 180°, or 270° (or tap <kbd>R</kbd> to cycle). Use <strong>Flip X</strong> (or <kbd>F</kbd>) to mirror it.</p>
+      <p>When you hover a dragged card over the canvas, a ghost preview shows exactly where the cells will land. Release to place.</p>
+
+      <ul>
+        <li><strong>Required</strong> — the classic patterns every GoL person knows: Glider, LWSS, Gosper Gun, Eater-1</li>
+        <li><strong>Custom</strong> — hand-crafted mechanisms: oscillators, seeds, forked drifters</li>
+        <li><strong>Circuit</strong> — verified signal-logic components: gates, carriers, seeds, oscillators</li>
+      </ul>
+
+      <div class="callout" style="margin-top:18px">
+        <div class="callout-title">The Inspector panel</div>
+        <p>Click any palette card to see it described in the Inspector on the right: its type, footprint, nominal period, and a usage tip. Read these — they contain years of GoL knowledge compressed into two sentences.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- TIME MACHINE -->
+<section class="section" id="timemachine">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Temporal Control</div>
+    <h2>The Time Machine</h2>
+    <p>Every generation you run is recorded — up to 600 frames of complete board state. The bar at the bottom of the canvas is your time machine.</p>
+  </div>
+
+  <div class="screen-wrap" style="margin-bottom:32px;">
+    <img src="media/screens/07-timeline-zoom.png" alt="Time Machine timeline" />
+    <p class="caption">The timeline bar. Teal dots are notebook entry markers — click any to jump to that exact moment.</p>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <table class="key-table">
+        <thead><tr><th>Button</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>⏮</kbd></td><td class="key-action">Jump to the very first recorded frame (gen 0)</td></tr>
+          <tr><td><kbd>⏴</kbd></td><td class="key-action">Step one generation backward — same as <kbd>B</kbd></td></tr>
+          <tr><td><kbd>⏪</kbd></td><td class="key-action">Play backward through history in real time</td></tr>
+          <tr><td><kbd>▶</kbd></td><td class="key-action">Play forward — same as Spacebar</td></tr>
+          <tr><td><kbd>⏵</kbd></td><td class="key-action">Step one generation forward — same as <kbd>N</kbd></td></tr>
+          <tr><td><kbd>⏭</kbd></td><td class="key-action">Jump to the latest recorded frame</td></tr>
+          <tr><td>Scrubber</td><td class="key-action">Click or drag anywhere on the track to jump instantly</td></tr>
+          <tr><td>Speed slider</td><td class="key-action">Sets playback speed: 1× to 30× steps per second</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="callout">
+        <div class="callout-title">Forking history</div>
+        <p>If you scrub back to, say, generation 50 and press Play, all history after generation 50 is discarded and a fresh timeline grows from that point. Think of it like choosing a different fork in time.</p>
+      </div>
+      <br>
+      <div class="callout tip">
+        <div class="callout-title">Slow-motion tip</div>
+        <p>Pause the simulation. Use <kbd>N</kbd> to step forward one frame at a time. This is the best way to study a specific collision — a glider hitting an eater, two streams annihilating, a chaotic patch suddenly crystallising into a still life.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- NOTEBOOK -->
+<section class="section" id="notebook">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">New Feature <span class="pill new" style="margin-left:6px; vertical-align: middle;">NEW</span></div>
+    <h2>The Notebook</h2>
+    <p>No other Game of Life tool has ever had this. The Notebook is a living research journal built directly into the simulation — temporally anchored, spatially aware, and self-writing.</p>
+  </div>
+
+  <div class="nb-showcase">
+    <div class="nb-showcase-grid">
+      <div>
+        <div class="screen-wrap">
+          <img src="media/screens/17-notebook-full.png" alt="Notebook panel open with entries" />
+          <p class="caption">The Notebook panel open alongside the board, showing the Live Feed and two journal entries.</p>
+        </div>
+      </div>
+      <div>
+        <p style="font-size:0.82rem; color:var(--muted); margin-bottom:18px; line-height:1.7;">Click the <span class="pill teal">📓 Notebook</span> button in the top bar to open the panel. It slides in from the right. Click it again — or press the ✕ inside the panel — to close it.</p>
+
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div class="concept">
+            <h4>📡 Live Feed</h4>
+            <p>The system watches your simulation automatically. It logs population peaks, extinction events, near-extinction moments, and stabilisation without any input from you. The feed updates in real time as you run.</p>
+          </div>
+          <div class="concept">
+            <h4>📖 Journal Entries</h4>
+            <p>Create your own entries at any moment. Each entry is locked to the current generation. Click <strong>↺ restore</strong> on any entry to teleport the entire simulation — board, camera, generation — back to that exact moment.</p>
+          </div>
+          <div class="concept">
+            <h4>📍 Spatial Pins</h4>
+            <p>Drop numbered pins on specific spots on the board. Pins are anchored in world coordinates: they stay fixed as you pan and zoom. Perfect for labelling a gun, an eater, or a collision zone.</p>
+          </div>
+          <div class="concept">
+            <h4>◆ Scenes & Cinematics</h4>
+            <p>Mark any entry as a "scene". Press <strong>▶ Scenes</strong> to play them back as a cinematic — the simulation restores each moment and plays forward for 8 seconds before transitioning to the next.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Creating an entry -->
+  <div class="feature-row" style="margin-top:0">
+    <div class="feature-text">
+      <h3>Creating a journal entry</h3>
+      <p>You can create an entry at any point — paused, playing, at any generation. Each entry captures the moment you press Save.</p>
+      <ul>
+        <li><strong>Title</strong> — Give the moment a name. "Crossfire gen 47", "Beautiful asymmetric crash".</li>
+        <li><strong>Notes</strong> — Write anything: observations, questions, hypotheses.</li>
+        <li><strong>Snapshot board</strong> — When checked, the full board state is saved as an RLE snapshot. The entry can restore the exact board later, even in a new browser session.</li>
+        <li><strong>Mark as scene</strong> — Includes this entry in the cinematic playback.</li>
+      </ul>
+      <p>Press <kbd>Save Entry</kbd> or hit <kbd>Enter</kbd> in the title field. A coloured dot immediately appears on the timeline scrubber at this entry's generation.</p>
+    </div>
+    <div class="screen-wrap">
+      <img src="media/screens/03-notebook-form.png" alt="Notebook entry creation form" />
+      <p class="caption">The entry form open with a title and notes ready to save.</p>
+    </div>
+  </div>
+
+  <!-- Timeline dots -->
+  <div class="feature-row flip">
+    <div class="feature-text">
+      <h3>Timeline dots — your journey mapped</h3>
+      <p>Every entry you create — including auto-detected events — places a coloured dot on the Time Machine scrubber at the exact generation it was recorded.</p>
+      <p>Hover a dot to see the entry title. <strong>Click any dot to immediately restore that entry</strong> — the board jumps back to that moment, the camera repositions, and the generation counter updates. Your entire exploration history is mapped onto the timeline.</p>
+      <div class="callout" style="margin-top:18px">
+        <div class="callout-title">Why this is powerful</div>
+        <p>Instead of hunting for "that moment when everything went wrong", you can drop an entry the instant something interesting happens. The dot is your permanent bookmark in time.</p>
+      </div>
+    </div>
+    <div class="screen-wrap">
+      <img src="media/screens/06-timeline-markers.png" alt="Timeline with notebook markers visible" />
+      <p class="caption">Two amber-tinted and teal notebook markers on the timeline scrubber. The amber dot is a user entry; the teal dot is an auto-detected event.</p>
+    </div>
+  </div>
+
+  <!-- Spatial Pins -->
+  <div class="feature-row">
+    <div class="feature-text">
+      <h3>Dropping spatial pins</h3>
+      <p>A journal entry can be pinned to a specific location on the board — not just a moment in time, but a place in the infinite grid.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h4>Open the Notebook</h4>
+            <p>Click <kbd>📓 Notebook</kbd> in the top bar.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h4>Click 📍 Pin</h4>
+            <p>The Notebook button pulses amber and your cursor changes. The app is waiting for you to click a location.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h4>Click anywhere on the board</h4>
+            <p>The entry form opens with a pin preview showing the world coordinates. Fill in a title and notes, then save.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <h4>The pin appears on the canvas</h4>
+            <p>A numbered circle marker appears at that exact world position. Pan and zoom freely — the pin tracks its location perfectly.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="screen-wrap">
+      <img src="media/screens/11-notebook-with-form.png" alt="Notebook with a detailed entry form open" />
+      <p class="caption">A detailed note entry being written while the simulation is loaded with the demo crossfire scene.</p>
+    </div>
+  </div>
+
+  <!-- Auto feed -->
+  <div class="feature-row flip">
+    <div class="feature-text">
+      <h3>The Live Feed — self-writing observations</h3>
+      <p>You don't have to write everything yourself. The Live Feed watches your simulation every 30 generations and logs significant events automatically:</p>
+      <ul>
+        <li><strong>Population peak</strong> — when the board reaches a new high of live cells</li>
+        <li><strong>Near-extinction</strong> — when fewer than 8 cells remain</li>
+        <li><strong>Extinction</strong> — when the last cell dies</li>
+        <li><strong>Stabilisation</strong> — when population locks for 20+ consecutive generations</li>
+      </ul>
+      <p>Each auto-event is also added to the journal list with a muted <span class="pill teal">auto</span> badge so you can tell them apart from your own entries.</p>
+      <div class="callout tip" style="margin-top:18px">
+        <div class="callout-title">Let it run overnight</div>
+        <p>Drop a seed pattern (try <strong>Acorn</strong> from the Circuit palette), press Play at high speed, and leave the tab open. When you return, the Live Feed will have narrated 5,000+ generations of history.</p>
+      </div>
+    </div>
+    <div class="screen-wrap">
+      <img src="media/screens/05-notebook-auto-feed.png" alt="Notebook auto feed with events" />
+      <p class="caption">The Live Feed after running the demo for a few seconds. Auto-detected events populate automatically.</p>
+    </div>
+  </div>
+
+  <!-- Scenes -->
+  <div class="feature-row">
+    <div class="feature-text">
+      <h3>Cinematic scene playback</h3>
+      <p>The most theatrical feature in the app. Mark any journal entries as scenes, then press <kbd>▶ Scenes</kbd> to watch them play out like a film.</p>
+      <ul>
+        <li>For each scene, the board restores to that exact state (camera included)</li>
+        <li>The simulation plays forward for 8 seconds</li>
+        <li>The scene title and notes appear in a floating overlay</li>
+        <li>After 8 seconds it transitions to the next scene automatically</li>
+        <li>Press <kbd>✕ Stop</kbd> at any time to end the cinema</li>
+      </ul>
+      <div class="callout warn" style="margin-top:18px">
+        <div class="callout-title">Mark scenes with snapshots</div>
+        <p>For the cinematic to restore the exact board, the entry needs a board snapshot. Always check <strong>Snapshot board</strong> when creating entries you plan to use as scenes.</p>
+      </div>
+    </div>
+    <div class="screen-wrap">
+      <img src="media/screens/18-notebook-scene-marked.png" alt="Entry marked as scene" />
+      <p class="caption">An entry marked as a scene — the purple ◆ badge shows it's included in cinematic playback.</p>
+    </div>
+  </div>
+
+  <!-- Export -->
+  <div class="callout" style="margin-top:32px">
+    <div class="callout-title">Export your notebook</div>
+    <p>Click <kbd>⬇ Export</kbd> in the notebook header to copy your entire journal as formatted plain text to the clipboard. Each entry includes its generation, population, your notes, and any snapshot metadata. Paste it into any document or email — it becomes a readable record of your discoveries.</p>
+  </div>
+</div>
+</section>
+
+<!-- ARCADE -->
+<section class="section" id="arcade">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Challenge Mode</div>
+    <h2>Arcade Missions</h2>
+    <p>Switch Mode to <strong>Arcade</strong>, pick a level, and press <strong>Start Level</strong>. The board loads a pre-designed mission with coloured objective zones and a ticking generation clock.</p>
+  </div>
+
+  <div class="feature-row">
+    <div class="screen-wrap">
+      <img src="media/screens/12-arcade-level.png" alt="Arcade mode level L1" />
+      <p class="caption">Arcade level L1 — Courier Duty. The amber receptor zone waits for a glider to arrive.</p>
+    </div>
+    <div class="feature-text">
+      <h3>Zone colours mean different things</h3>
+      <ul>
+        <li><span class="pill amber">Amber</span> — <strong>Receptor</strong>: get a glider to land here</li>
+        <li><span class="pill teal">Teal</span> — <strong>Switch</strong>: trigger this zone to register a hit</li>
+        <li><span class="pill purple">Blue</span> — <strong>Core</strong>: keep this oscillator alive</li>
+        <li><span class="pill red">Red</span> — <strong>Danger zone</strong>: don't let anything in here</li>
+      </ul>
+      <br>
+      <table class="key-table">
+        <thead><tr><th>#</th><th>Level</th><th>Objective</th></tr></thead>
+        <tbody>
+          <tr><td>L1</td><td>Courier Duty</td><td class="key-action">Route a glider to the receptor in 180 gens</td></tr>
+          <tr><td>L2</td><td>Beacon Watch</td><td class="key-action">Keep the oscillator alive for 120 gens</td></tr>
+          <tr><td>L3</td><td>Twin Switch Boot</td><td class="key-action">Trigger both switches within 220 gens</td></tr>
+          <tr><td>L4</td><td>Population Tempo</td><td class="key-action">Hold population 60–180 cells for 150 gens</td></tr>
+          <tr><td>L5</td><td>Final Assembly</td><td class="key-action">Hit receptor AND keep core alive to gen 260</td></tr>
+        </tbody>
+      </table>
+      <div class="callout tip" style="margin-top:18px">
+        <div class="callout-title">Arcade tip</div>
+        <p>You can still draw on the board during Arcade missions. Trigger zone events in rapid succession to build combo multipliers and run up your score.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- CIRCUIT ACADEMY -->
+<section class="section" id="academy">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Guided Learning</div>
+    <h2>Circuit Academy</h2>
+    <p>Seven structured lessons that teach signal logic from scratch — no prior knowledge needed. Each level comes with an on-screen guide card that explains the concept and offers three progressive hints on demand.</p>
+  </div>
+
+  <div class="feature-row">
+    <div class="feature-text">
+      <h3>What you'll learn</h3>
+      <ul>
+        <li><strong>CA-1 Stream Rider</strong> — Gliders as signal packets. Watch a Gosper gun fire and understand what c/4 diagonal speed means.</li>
+        <li><strong>CA-2 Signal Stop</strong> — The Eater-1. Place one in a live stream and watch it absorb every glider without dying.</li>
+        <li><strong>CA-3 Parallel Streams</strong> — Two independent gun streams ignore each other completely — signals don't collide unless their paths actually overlap.</li>
+        <li><strong>CA-4 Not Today</strong> — Head-on annihilation. Two opposing streams cancel every packet. This is a NOT gate.</li>
+        <li><strong>CA-5 OR Gate</strong> — Two inputs, either one wins. Block one gun — the other still delivers.</li>
+        <li><strong>CA-6 AND Gate</strong> — Both inputs must fire. Block either gun — neither receptor fires.</li>
+        <li><strong>CA-7 Signal Crossing</strong> — SE and SW streams travel through the same board region on completely different diagonal rails. They never interact.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="screen-wrap">
+        <img src="media/screens/13-circuit-academy.png" alt="Circuit Academy with guide card" />
+        <p class="caption">CA-1 Stream Rider — the guide card explains glider streams. The Hint button reveals progressive clues.</p>
+      </div>
+      <br>
+      <div class="screen-wrap">
+        <img src="media/screens/14-guide-card.png" alt="Guide card close-up" />
+        <p class="caption">The guide card lives in the bottom-left corner of the canvas. Close it with × when you're ready to work independently.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 3D WORLDS -->
+<section class="section" id="3d">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Topology</div>
+    <h2>3D Manifold Modes</h2>
+    <p>Swap the <strong>Mode</strong> dropdown to Sphere, Torus, Klein Bottle, Möbius Strip, or Cylinder. The same Game of Life rules run on curved surfaces rendered in WebGL.</p>
+  </div>
+
+  <div class="feature-row flip">
+    <div class="feature-text">
+      <h3>Why play on a curved surface?</h3>
+      <p>On a flat grid, every glider that reaches the edge disappears. On a Torus, it wraps around and re-enters from the opposite side. On a Klein Bottle, it enters flipped. On a Möbius Strip, the topology itself becomes part of the game.</p>
+      <ul>
+        <li><strong>Sphere</strong> <kbd>3</kbd> — no edges, fully closed surface</li>
+        <li><strong>Torus</strong> <kbd>4</kbd> — wrap left↔right and top↔bottom</li>
+        <li><strong>Klein Bottle</strong> <kbd>5</kbd> — left/right wrap, top/bottom flip</li>
+        <li><strong>Möbius Strip</strong> <kbd>6</kbd> — left/right wrap with Y-flip, open edges</li>
+        <li><strong>Cylinder</strong> <kbd>7</kbd> — left/right wrap, open top/bottom</li>
+      </ul>
+      <div class="callout" style="margin-top:18px">
+        <div class="callout-title">Drawing in 3D</div>
+        <p>Left-click on the surface to paint cells. Right-drag to rotate the view. Scroll to zoom. All surface modes respect the same GoL rules — topology only affects neighbour lookup at the boundaries.</p>
+      </div>
+    </div>
+    <div class="screen-wrap">
+      <img src="media/screens/10-torus.png" alt="Torus mode — Game of Life on a torus" />
+      <p class="caption">Torus mode. A glider near the right edge will re-enter from the left. Drop a Gosper gun pointing right — the stream wraps around and could hit the gun itself.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- TUTORIALS -->
+<section class="section" id="tutorials">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Step-by-Step</div>
+    <h2>Mini Tutorials</h2>
+    <p>Each tutorial takes 3–8 minutes and teaches a real skill you'll use again and again.</p>
+  </div>
+
+  <div class="tutorial">
+    <div class="tutorial-label">Tutorial 1</div>
+    <h3>Build a self-sustaining glider stream</h3>
+    <p>You'll set up a Gosper Glider Gun, point it at an Eater, and prove that signals can be absorbed cleanly — forever.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body"><h4>Clear the board</h4><p>Press <kbd>C</kbd> to clear, then press <kbd>G</kbd> to toggle the grid on so you can see individual cells.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body"><h4>Drop a Gosper Glider Gun</h4><p>In the Prefab Palette (Required category), drag the <strong>Gosper Glider Gun</strong> card onto the left side of the board. Drop it there.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body"><h4>Run for 60 generations</h4><p>Press Play and let it run to about generation 60. Watch gliders firing diagonally to the lower-right. Pause.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body"><h4>Drop an Eater</h4><p>From the palette (Required category), drag <strong>Eater-1</strong> directly into the stream — somewhere along the diagonal path the gliders are travelling. The Eater's "bite" corner must face the incoming gliders (rotate with <kbd>R</kbd> if needed).</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body"><h4>Watch interception</h4><p>Press Play. The Eater absorbs every glider and bounces back to its original shape. It will keep doing this indefinitely. You've built signal termination.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-body"><h4>Record it</h4><p>Open the Notebook, create an entry titled "Glider stream termination", check Snapshot, and save. You now have a permanent record of this working circuit.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tutorial">
+    <div class="tutorial-label">Tutorial 2</div>
+    <h3>Rewind and study a chaotic crash</h3>
+    <p>Use the Time Machine to find and freeze a specific moment of chaos — the most powerful debugging tool in the simulation.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body"><h4>Load the Demo</h4><p>Click <kbd>Load Demo</kbd>. Two guns, an eater, several seeds — a complex scene guaranteed to produce interesting collisions.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body"><h4>Play at high speed</h4><p>Set the speed slider (bottom-right of timeline) to <strong>15×</strong> or higher. Press Play and watch for a crash or chaotic bloom.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body"><h4>Pause at the interesting moment</h4><p>As soon as something surprising happens, press Spacebar to pause.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body"><h4>Step backward to the exact frame</h4><p>Press <kbd>B</kbd> repeatedly to step back one generation at a time. Find the precise moment the crash began.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body"><h4>Step forward in slow motion</h4><p>Press <kbd>N</kbd> to advance one generation at a time. Watch each cell live or die. You can see exactly which neighbours triggered each birth or death.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-body"><h4>Pin the discovery</h4><p>With the board paused at the crash frame, open the Notebook, click <kbd>📍 Pin</kbd>, click on the collision point on the board, write "Glider met the edge of the seed bloom" and save.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tutorial">
+    <div class="tutorial-label">Tutorial 3</div>
+    <h3>Create your first cinematic</h3>
+    <p>Document a complete story — from empty board to stable pattern — and play it back as a film.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body"><h4>Clear and plant a seed</h4><p>Press <kbd>C</kbd> to clear. From the Circuit palette, drag <strong>Acorn</strong> to the centre of the board. This tiny 7-cell pattern will run for 5,206 generations before stabilising.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body"><h4>Save entry: "Act 1 — The Seed"</h4><p>Open the Notebook, click <kbd>+ Entry</kbd>. Title: "Act 1 — The Seed". Body: "Acorn planted at centre. 7 cells. 5,206 generations to go." Check Snapshot. Check <strong>Mark as scene</strong>. Save.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body"><h4>Run to the chaos peak</h4><p>Set speed to 15× and play until around generation 200, when the board is at maximum chaotic bloom. Pause.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body"><h4>Save entry: "Act 2 — Maximum Chaos"</h4><p>Create another entry. Title: "Act 2 — Maximum Chaos". Check Snapshot and Mark as scene. Save.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body"><h4>Fast-forward to stabilisation</h4><p>Set speed to 30× and let it run until the Live Feed reports "Board stabilized". The Acorn eventually resolves into a collection of still lifes, oscillators, and gliders.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-body"><h4>Save entry: "Act 3 — Peace"</h4><p>One last entry. Title: "Act 3 — Peace". Body: whatever you observed. Check Snapshot and Mark as scene. Save.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">7</div>
+        <div class="step-body"><h4>Press ▶ Scenes</h4><p>In the Notebook, click <kbd>▶ Scenes</kbd>. Watch your three-act story play automatically. Share it with someone and watch their face.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tutorial">
+    <div class="tutorial-label">Tutorial 4</div>
+    <h3>Play Life on a doughnut</h3>
+    <p>Switch to Torus mode and see what changes when your universe wraps around itself with no edges.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body"><h4>Switch to Torus mode</h4><p>Press <kbd>4</kbd> or use the Mode dropdown. The canvas switches to a 3D torus rendered in WebGL.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body"><h4>Paint a glider near the right edge</h4><p>Left-click on the torus surface to paint cells. Draw the classic glider shape (3×3, L-shape) close to the right edge of the torus.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body"><h4>Press Play and watch it wrap</h4><p>The glider reaches the right edge — and re-enters from the left. The torus has no boundary. The glider will travel forever in an eternal loop.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body"><h4>Drop a Gosper gun near the top edge</h4><p>Drag a Gosper Gun card from the palette. Let it fire. The stream exits the top of the torus and re-enters at the bottom — it could circle around and hit the gun itself.</p></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- BEST RESULTS -->
+<section class="section" id="tips">
+<div class="container">
+  <div class="section-header">
+    <div class="section-eyebrow">Recommendations</div>
+    <h2>Getting the best results</h2>
+    <p>These are the habits that separate casual exploration from genuine discovery.</p>
+  </div>
+
+  <div class="card-grid" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin-bottom: 40px;">
+    <div class="card">
+      <div class="card-icon">📍</div>
+      <h3>Pin first, explore later</h3>
+      <p>When something interesting appears, drop a Notebook pin on it immediately — before you move the camera or advance another generation. You can always write the notes later, but you can't recover the board position.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🐢</div>
+      <h3>Slow motion is your microscope</h3>
+      <p>Use <kbd>N</kbd> to step one generation at a time when studying a collision. The difference between a glider annihilating and a glider surviving is often a single cell offset — you can't see it at full speed.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">📸</div>
+      <h3>Always snapshot scenes</h3>
+      <p>When creating entries you want to use in the cinematic, always check "Snapshot board". Without a snapshot, the Scenes player can only restore the camera — not the board state itself.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🧪</div>
+      <h3>Use Circuit Academy as a library</h3>
+      <p>The 7 Circuit Academy levels are runnable at any time. Load CA-4 just to watch the NOT gate in action. Load CA-7 to see the signal crossing. You don't have to "complete" them — use them as demonstrations.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">⏪</div>
+      <h3>Rewind before you erase</h3>
+      <p>Before pressing <kbd>C</kbd> to clear, consider whether there's a state in the history buffer worth saving as a Notebook entry. Once you clear, that history is gone.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🌀</div>
+      <h3>Try seeds, not guns, for chaos</h3>
+      <p>Gosper Guns produce predictable, periodic output. For wild emergent behaviour, drop a <strong>R-Pentomino</strong> or <strong>Acorn</strong> from the Circuit palette, stand back, and watch the universe figure itself out.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🎬</div>
+      <h3>Build your scenes chronologically</h3>
+      <p>The Scenes cinematic plays entries in generation order. Plan your three-act structure: an early state, a peak moment, a resolution. Create entries at each act, then hit Scenes to watch the story.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🌐</div>
+      <h3>Topology changes everything</h3>
+      <p>A pattern that dies on a flat grid might be immortal on a torus. A glider gun that wastes its stream into empty space on the plane might create a closed loop on a cylinder. Try any pattern in 3D mode — the surprises are real.</p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout-title">Advanced: Rule Lab</div>
+    <p>In the Inspector panel on the right, the <strong>Rule Lab</strong> section lets you change the physics of life itself. Try <code>B36/S23</code> (HighLife) for a self-replicating pattern. Try <code>B2/S</code> (Seeds) to watch explosive growth with nothing surviving. Try <code>B3678/S34678</code> (Day &amp; Night) for a universe where dead and alive are symmetric. Always create a Notebook entry before changing the rule — so you can restore your favourite state later.</p>
+  </div>
+
+  <div class="callout tip" style="margin-top:20px">
+    <div class="callout-title">The deepest insight</div>
+    <p>The most important thing to understand about Conway's Game of Life is that <em>complexity is free</em>. The three rules that govern every cell are simpler than a traffic light. The patterns that emerge from them — spaceships, guns, computers, universal constructors — were not designed. They were discovered. This is a universe where the laws are trivially simple and the consequences are infinite. You are now one of the people exploring it.</p>
+  </div>
+
+  <!-- Reference table -->
+  <hr class="divider" />
+  <h3 style="font-size:1.2rem; margin-bottom:20px; color:var(--ink);">Complete Keyboard Reference</h3>
+  <div class="two-col">
+    <div>
+      <table class="key-table">
+        <thead><tr><th>Key</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Space</kbd></td><td class="key-action">Play / Pause</td></tr>
+          <tr><td><kbd>N</kbd></td><td class="key-action">Step one generation forward</td></tr>
+          <tr><td><kbd>B</kbd></td><td class="key-action">Step one generation backward</td></tr>
+          <tr><td><kbd>C</kbd></td><td class="key-action">Clear board</td></tr>
+          <tr><td><kbd>D</kbd></td><td class="key-action">Load demo scene</td></tr>
+          <tr><td><kbd>R</kbd></td><td class="key-action">Cycle prefab rotation 0→90→180→270°</td></tr>
+          <tr><td><kbd>F</kbd></td><td class="key-action">Flip prefab on X axis</td></tr>
+          <tr><td><kbd>G</kbd></td><td class="key-action">Toggle grid overlay</td></tr>
+          <tr><td><kbd>P</kbd></td><td class="key-action">Switch to Paint mode</td></tr>
+          <tr><td><kbd>M</kbd></td><td class="key-action">Toggle Move/Pan mode</td></tr>
+          <tr><td><kbd>S</kbd></td><td class="key-action">Toggle Select mode</td></tr>
+          <tr><td><kbd>V</kbd></td><td class="key-action">Toggle Force-field mode</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td class="key-action">Return to Paint mode, clear selection</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <table class="key-table">
+        <thead><tr><th>Key</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Del</kbd></td><td class="key-action">Delete cells in selection</td></tr>
+          <tr><td><kbd>Ctrl+C</kbd></td><td class="key-action">Copy selection</td></tr>
+          <tr><td><kbd>Ctrl+X</kbd></td><td class="key-action">Cut selection</td></tr>
+          <tr><td><kbd>Ctrl+V</kbd></td><td class="key-action">Paste at cursor</td></tr>
+          <tr><td><kbd>1</kbd></td><td class="key-action">Sandbox mode</td></tr>
+          <tr><td><kbd>2</kbd></td><td class="key-action">Arcade mode</td></tr>
+          <tr><td><kbd>3</kbd></td><td class="key-action">Sphere</td></tr>
+          <tr><td><kbd>4</kbd></td><td class="key-action">Torus</td></tr>
+          <tr><td><kbd>5</kbd></td><td class="key-action">Klein Bottle</td></tr>
+          <tr><td><kbd>6</kbd></td><td class="key-action">Möbius Strip</td></tr>
+          <tr><td><kbd>7</kbd></td><td class="key-action">Cylinder</td></tr>
+          <tr><td>Middle drag</td><td class="key-action">Pan (works in any mode)</td></tr>
+          <tr><td>Scroll wheel</td><td class="key-action">Zoom in/out</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="container">
+    <p style="margin-bottom:8px;">
+      <strong style="color:var(--teal);">Automata Arcade</strong> — Engineering Lab · Cellular Sandbox · Mission Mode
+    </p>
+    <p>Built with vanilla JS · Three.js · curiosity</p>
+    <p style="margin-top:8px; font-size:0.74rem; color:#4a7a8a;">
+      <em>"Any sufficiently complicated cellular automaton contains an ad hoc, informally-specified, bug-ridden, slow implementation of half of Conway's Game of Life."</em> — apologies to Greenspun
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

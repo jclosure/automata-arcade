@@ -78,7 +78,11 @@ The main canvas is a pan-and-zoom 2D grid running Conway's B3/S23 rules.
 | `R` | Cycle rotation (0° → 90° → 180° → 270°) |
 | `F` | Flip prefab on X axis |
 | `G` | Toggle grid overlay |
-| `P` | Place selected prefab at cursor |
+| `P` | Switch to **Paint** mode |
+| `M` | Toggle **Move/Pan** mode |
+| `S` | Toggle **Select** mode |
+| `V` | Toggle **Force** mode |
+| `Esc` | Return to Paint mode, clear selection |
 | `1` | Sandbox mode |
 | `2` | Arcade mode |
 | `3` | Sphere |

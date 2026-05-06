@@ -47,6 +47,14 @@
           </label>
           <label class="mode-wrap"><input type="checkbox" id="sharedStateInput" checked /> Shared State</label>
           <button id="startLevelBtn">Start Level</button>
+          <button id="libraryBtn">Library</button>
+          <button id="notebookBtn" class="nb-toggle-btn">📓 Notebook</button>
+          <div class="mode-group">
+            <button class="mode-btn mode-btn-active" data-mode="paint" title="Paint (P)">✏ Paint</button>
+            <button class="mode-btn" data-mode="move" title="Move/Pan (M)">✥ Move</button>
+            <button class="mode-btn" data-mode="select" title="Select (S)">⬚ Select</button>
+            <button class="mode-btn" data-mode="force" title="Force Paint (V)">⊛ Force</button>
+          </div>
         </div>
         <div class="right-controls">
           <label>Rotate
@@ -130,11 +138,380 @@
             <li><kbd>6</kbd> Möbius Strip</li>
             <li><kbd>7</kbd> Cylinder</li>
             <li><kbd>Mouse Wheel</kbd> Zoom</li>
-            <li><kbd>Space + Drag</kbd> Pan</li>
+            <li><kbd>Middle Drag</kbd> Pan (any mode)</li>
             <li><kbd>Right Drag</kbd> Spin sphere</li>
+            <li><kbd>P</kbd> Paint mode</li>
+            <li><kbd>M</kbd> Move/pan mode</li>
+            <li><kbd>S</kbd> Select mode</li>
+            <li><kbd>V</kbd> Force-paint mode</li>
+            <li><kbd>Esc</kbd> Back to paint mode</li>
+            <li><kbd>X</kbd> Toggle paint type (A/B)</li>
+            <li><kbd>Del</kbd> Delete selection</li>
+            <li><kbd>Ctrl+C</kbd> Copy selection</li>
+            <li><kbd>Ctrl+X</kbd> Cut selection</li>
+            <li><kbd>Ctrl+V</kbd> Paste at cursor</li>
           </ul>
+          <hr />
+          <h3>Rule Lab</h3>
+          <div id="ruleLab">
+            <label class="rl-row">
+              <span>Rule</span>
+              <input id="ruleInput" class="rl-input" type="text" value="B3/S23" spellcheck="false" autocomplete="off" />
+              <button id="ruleApply" class="rl-apply">Apply</button>
+            </label>
+            <div class="rl-presets">
+              <button class="rl-preset" data-rule="B3/S23" title="The classic">Conway</button>
+              <button class="rl-preset" data-rule="B36/S23" title="Has a self-replicator">HighLife</button>
+              <button class="rl-preset" data-rule="B2/S" title="Explosive — nothing survives">Seeds</button>
+              <button class="rl-preset" data-rule="B3678/S34678" title="Self-complementary">Day&amp;Night</button>
+              <button class="rl-preset" data-rule="B368/S245" title="Unusual glider shapes">Morley</button>
+              <button class="rl-preset" data-rule="B4678/S35678" title="Crystalline regions">Anneal</button>
+              <button class="rl-preset" data-rule="B3/S12345" title="Grows maze corridors">Maze</button>
+              <button class="rl-preset" data-rule="B35678/S5678" title="Amoeba-like blobs">Diamoeba</button>
+            </div>
+            <label class="rl-row">
+              <span>Kernel</span>
+              <select id="kernelShape" class="rl-select">
+                <option value="moore">Moore</option>
+                <option value="vonNeumann">Von Neumann</option>
+                <option value="ring">Ring</option>
+                <option value="cross">Cross</option>
+                <option value="hex">Hex</option>
+                <option value="knight">Knight</option>
+              </select>
+            </label>
+            <label class="rl-row">
+              <span>Radius</span>
+              <input id="kernelRadius" class="rl-radius" type="range" min="1" max="5" value="1" />
+              <span id="kernelRadiusOut">1</span>
+            </label>
+            <div class="rl-sep"></div>
+            <label class="rl-check">
+              <input type="checkbox" id="ruleCycleActive" /> Cycle rules
+            </label>
+            <label class="rl-row">
+              <span>Rule 2</span>
+              <input id="ruleInput2" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
+            </label>
+            <label class="rl-row">
+              <span>Period</span>
+              <input id="ruleCyclePeriod" class="rl-radius" type="range" min="10" max="500" step="10" value="60" />
+              <span id="ruleCyclePeriodOut">60</span>
+            </label>
+          </div>
+          <hr />
+          <h3>Physics</h3>
+          <div id="physicsLab">
+            <label class="rl-row">
+              <span>Drift X</span>
+              <input id="driftX" class="rl-radius" type="range" min="-3" max="3" step="0.25" value="0" />
+              <span id="driftXOut">0.00</span>
+            </label>
+            <label class="rl-row">
+              <span>Drift Y</span>
+              <input id="driftY" class="rl-radius" type="range" min="-3" max="3" step="0.25" value="0" />
+              <span id="driftYOut">0.00</span>
+            </label>
+            <label class="rl-check">
+              <input type="checkbox" id="colorByAge" /> Color by age
+            </label>
+            <label class="rl-check">
+              <input type="checkbox" id="showTrails" /> Show trails
+            </label>
+            <label class="rl-row">
+              <span>Decay</span>
+              <input id="trailDecay" class="rl-radius" type="range" min="0.7" max="0.99" step="0.01" value="0.88" />
+              <span id="trailDecayOut">0.88</span>
+            </label>
+            <div class="rl-sep"></div>
+            <label class="rl-check">
+              <input type="checkbox" id="repulseEnabled" /> Repulse old cells
+            </label>
+            <label class="rl-row">
+              <span>Age ≥</span>
+              <input id="repulseAge" class="rl-radius" type="range" min="1" max="100" step="1" value="20" />
+              <span id="repulseAgeOut">20</span>
+            </label>
+            <label class="rl-row">
+              <span>Strength</span>
+              <input id="repulseStrength" class="rl-radius" type="range" min="1" max="4" step="1" value="1" />
+              <span id="repulseStrengthOut">1</span>
+            </label>
+            <div class="rl-sep"></div>
+            <label class="rl-check">
+              <input type="checkbox" id="contigRepulseEnabled" /> Organism repulsion
+            </label>
+            <label class="rl-row">
+              <span>Radius</span>
+              <input id="contigRepulseRadius" class="rl-radius" type="range" min="5" max="100" step="5" value="30" />
+              <span id="contigRepulseRadiusOut">30</span>
+            </label>
+            <label class="rl-row">
+              <span>Force</span>
+              <input id="contigRepulseForce" class="rl-radius" type="range" min="0.1" max="8" step="0.1" value="1" />
+              <span id="contigRepulseForceOut">1.0</span>
+            </label>
+            <label class="rl-row">
+              <span>Min size</span>
+              <input id="contigMinSize" class="rl-radius" type="range" min="2" max="50" step="1" value="5" />
+              <span id="contigMinSizeOut">5</span>
+            </label>
+          </div>
+          <hr />
+          <h3>Wave Mode</h3>
+          <div id="waveLab">
+            <label class="rl-check">
+              <input type="checkbox" id="leniaModeChk" /> Lenia wave mode
+            </label>
+            <label class="rl-row">
+              <span>μ center</span>
+              <input id="leniaMu" class="rl-radius" type="range" min="0.01" max="0.5" step="0.01" value="0.15" />
+              <span id="leniaMuOut">0.15</span>
+            </label>
+            <label class="rl-row">
+              <span>σ width</span>
+              <input id="leniaSigma" class="rl-radius" type="range" min="0.001" max="0.1" step="0.001" value="0.017" />
+              <span id="leniaSigmaOut">0.017</span>
+            </label>
+            <label class="rl-row">
+              <span>Δt step</span>
+              <input id="leniaDt" class="rl-radius" type="range" min="0.01" max="0.5" step="0.01" value="0.1" />
+              <span id="leniaDtOut">0.10</span>
+            </label>
+          </div>
+          <hr />
+          <h3>Cell Types</h3>
+          <div id="typeLab">
+            <label class="rl-check">
+              <input type="checkbox" id="cellTypesChk" /> Enable cell types
+            </label>
+            <div class="rl-type-row">
+              <button id="typeABtn" class="rl-type-btn rl-type-active">Type A</button>
+              <button id="typeBBtn" class="rl-type-btn">Type B</button>
+              <span class="rl-type-hint"><kbd>X</kbd> toggle</span>
+            </div>
+            <label class="rl-row">
+              <span>A rule</span>
+              <input id="typeARule" class="rl-input" type="text" value="B3/S23" spellcheck="false" autocomplete="off" />
+            </label>
+            <label class="rl-row">
+              <span>B rule</span>
+              <input id="typeBRule" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
+            </label>
+          </div>
+          <hr />
+          <h3>Rule Zones</h3>
+          <div id="zoneLab">
+            <label class="rl-check">
+              <input type="checkbox" id="zoneEnabled" /> Enable zone split
+            </label>
+            <label class="rl-row">
+              <span>Axis</span>
+              <select id="zoneAxis" class="rl-select">
+                <option value="x">Vertical (X)</option>
+                <option value="y">Horizontal (Y)</option>
+              </select>
+            </label>
+            <label class="rl-row">
+              <span>Offset</span>
+              <input id="zoneOffset" class="rl-radius" type="range" min="-200" max="200" step="1" value="0" />
+              <span id="zoneOffsetOut">0</span>
+            </label>
+            <label class="rl-row">
+              <span>Zone 2</span>
+              <input id="zoneRule2" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
+            </label>
+          </div>
+          <hr />
+          <h3>Force Fields</h3>
+          <div id="fieldLab">
+            <button id="forcePaintToggle" class="rl-type-btn" style="width:100%;margin-bottom:4px;">Force Paint <kbd>V</kbd></button>
+            <div class="rl-type-row">
+              <button id="forceAttractBtn" class="rl-type-btn rl-type-active">Attract</button>
+              <button id="forceRepelBtn" class="rl-type-btn">Repel</button>
+            </div>
+            <label class="rl-row">
+              <span>Radius</span>
+              <input id="forceRadius" class="rl-radius" type="range" min="3" max="60" step="1" value="15" />
+              <span id="forceRadiusOut">15</span>
+            </label>
+            <label class="rl-row">
+              <span>Strength</span>
+              <input id="forceStrength" class="rl-radius" type="range" min="1" max="8" step="1" value="3" />
+              <span id="forceStrengthOut">3</span>
+            </label>
+            <button id="forceClearBtn" class="rl-apply" style="width:100%;margin-top:2px;">Clear fields</button>
+            <div class="rl-sep"></div>
+            <label class="rl-check">
+              <input type="checkbox" id="densityFeedback" /> Density feedback
+            </label>
+            <label class="rl-row">
+              <span>Target</span>
+              <input id="densityTarget" class="rl-radius" type="range" min="50" max="3000" step="50" value="500" />
+              <span id="densityTargetOut">500</span>
+            </label>
+            <label class="rl-row">
+              <span>Strength</span>
+              <input id="densityStrength" class="rl-radius" type="range" min="1" max="5" step="1" value="1" />
+              <span id="densityStrengthOut">1</span>
+            </label>
+          </div>
+          <hr />
+          <h3>Capture Prefab</h3>
+          <div id="captureLab">
+            <button id="selModeBtn" class="rl-type-btn" style="width:100%;margin-bottom:4px;">Select Region <kbd>S</kbd></button>
+            <div id="selInfo" class="capture-info"></div>
+            <label class="rl-row">
+              <span>Name</span>
+              <input id="captureNameInput" class="rl-input" type="text" placeholder="Pattern name…" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="rl-row">
+              <span>Desc</span>
+              <input id="captureDescInput" class="rl-input" type="text" placeholder="Optional description…" autocomplete="off" spellcheck="false" />
+            </label>
+            <div style="display:flex;gap:5px;margin-top:3px;">
+              <button id="captureSaveBtn" class="rl-apply" style="flex:1;">Save Prefab</button>
+              <button id="clearSelBtn" class="rl-apply" style="flex:0 0 auto;">Clear</button>
+            </div>
+          </div>
+          <hr />
+          <h3>Analysis</h3>
+          <div id="analysisLab">
+            <button id="detectPeriodBtn" class="rl-apply" style="width:100%">Detect Period</button>
+            <div id="periodResult" class="capture-info"></div>
+            <div class="rl-sep"></div>
+            <div style="display:flex;gap:5px;">
+              <button id="exportRLEBtn" class="rl-apply" style="flex:1">Export RLE</button>
+              <button id="importRLEBtn" class="rl-apply" style="flex:1">Import RLE</button>
+            </div>
+            <textarea id="rleAreaInline" class="rle-area-inline" style="display:none" placeholder="Paste RLE here…" spellcheck="false"></textarea>
+            <button id="rleLoadInlineBtn" class="rl-apply" style="width:100%;display:none">Load from RLE</button>
+          </div>
+          <hr />
+          <h3>Heatmap</h3>
+          <div id="evoLab">
+            <label class="rl-check">
+              <input type="checkbox" id="heatmapMode" /> Show heatmap only
+            </label>
+            <label class="rl-check">
+              <input type="checkbox" id="heatmapOverlay" /> Overlay heatmap
+            </label>
+            <button id="clearHeatBtn" class="rl-apply" style="width:100%;margin-top:3px;">Clear heat</button>
+            <div class="rl-sep"></div>
+            <label class="rl-check">
+              <input type="checkbox" id="entrenchEnabled" /> Entrenched trails
+            </label>
+            <label class="rl-row">
+              <span>Thresh</span>
+              <input id="entrenchThresh" class="rl-radius" type="range" min="2" max="40" step="1" value="8" />
+              <span id="entrenchThreshOut">8</span>
+            </label>
+            <div class="rl-sep"></div>
+            <label class="rl-check">
+              <input type="checkbox" id="adaptRulesEnabled" /> Adaptive rules
+            </label>
+            <label class="rl-row">
+              <span>Target</span>
+              <input id="adaptTarget" class="rl-radius" type="range" min="50" max="2000" step="50" value="400" />
+              <span id="adaptTargetOut">400</span>
+            </label>
+            <label class="rl-row">
+              <span>Rate</span>
+              <input id="adaptRate" class="rl-radius" type="range" min="20" max="500" step="10" value="80" />
+              <span id="adaptRateOut">80</span>
+            </label>
+          </div>
         </aside>
       </main>
+    </div>
+
+    <!-- Notebook panel — slides in from right -->
+    <aside id="notebookPanel" class="nb-panel">
+      <div class="nb-header">
+        <span class="nb-wordmark">📓 NOTEBOOK</span>
+        <div class="nb-header-actions">
+          <button id="nbScenesBtn" class="nb-hdr-btn" title="Play marked scenes as a cinematic">▶ Scenes</button>
+          <button id="nbExportBtn" class="nb-hdr-btn" title="Export notebook to clipboard">⬇ Export</button>
+          <button id="nbCloseBtn" class="nb-hdr-btn nb-close-btn" title="Close notebook">✕</button>
+        </div>
+      </div>
+
+      <div class="nb-auto-section">
+        <div class="nb-section-label">Live Feed <span class="nb-auto-dot"></span></div>
+        <div id="nbAutoFeed" class="nb-auto-feed">
+          <div class="nb-feed-empty">Auto-detection active — events will appear here as the simulation runs.</div>
+        </div>
+      </div>
+
+      <div class="nb-journal-section">
+        <div class="nb-section-label">
+          Journal
+          <div class="nb-journal-btns">
+            <button id="nbPinBtn" class="nb-pin-btn" title="Drop a spatial pin on the board, then write a note">📍 Pin</button>
+            <button id="nbNewBtn" class="nb-new-btn">+ Entry</button>
+          </div>
+        </div>
+
+        <div id="nbForm" class="nb-form" style="display:none">
+          <div id="nbPinPreview" class="nb-pin-preview" style="display:none">
+            📍 Pinned at world (<span id="nbPinCX"></span>, <span id="nbPinCY"></span>)
+          </div>
+          <input id="nbTitleInput" class="nb-title-input" placeholder="Name this moment…" autocomplete="off" spellcheck="false" />
+          <textarea id="nbBodyInput" class="nb-body-input" placeholder="What happened? What's interesting?"></textarea>
+          <div class="nb-form-opts">
+            <label class="nb-opt"><input type="checkbox" id="nbSnapshotChk" checked /> Snapshot board</label>
+            <label class="nb-opt"><input type="checkbox" id="nbSceneChk" /> Mark as scene</label>
+          </div>
+          <div class="nb-form-btns">
+            <button id="nbSaveBtn" class="nb-save-btn">Save Entry</button>
+            <button id="nbCancelBtn" class="nb-cancel-btn">Cancel</button>
+          </div>
+        </div>
+
+        <div id="nbEntries" class="nb-entries">
+          <div class="nb-feed-empty">No entries yet. Press + Entry to document a discovery.</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Cinematic scene overlay -->
+    <div id="sceneOverlay" class="scene-overlay hidden">
+      <div class="scene-content">
+        <div class="scene-counter" id="sceneCounter">Scene 1 of 3</div>
+        <div class="scene-title" id="sceneTitle"></div>
+        <div class="scene-body" id="sceneBody"></div>
+      </div>
+      <button id="sceneStopBtn" class="scene-stop-btn">✕ Stop</button>
+    </div>
+
+    <div id="libraryModal" class="lib-modal">
+      <div class="lib-card">
+        <div class="lib-header">
+          <strong class="lib-title">Library</strong>
+          <button id="libClose" class="lib-close">×</button>
+        </div>
+        <div class="lib-tabs">
+          <button id="libTabCfg" class="lib-tab lib-tab-active">Configs</button>
+          <button id="libTabBoard" class="lib-tab">Boards</button>
+          <button id="libTabRLE" class="lib-tab">RLE</button>
+        </div>
+        <div id="libSaveRow" class="lib-save-row">
+          <input id="libNameInput" class="lib-name-input" type="text" placeholder="Name…" autocomplete="off" spellcheck="false" />
+          <button id="libSaveBtn" class="lib-save-btn">Save</button>
+        </div>
+        <div id="libList" class="lib-list"></div>
+        <div id="libRLEPanel" class="lib-rle-panel" style="display:none">
+          <label class="lib-rle-label">Export (current board)</label>
+          <textarea id="rleExportArea" class="lib-rle-area" readonly placeholder="(board is empty)"></textarea>
+          <div class="lib-rle-btns">
+            <button id="rleCopyBtn" class="lib-save-btn">Copy</button>
+            <button id="rleDownloadBtn" class="lib-save-btn">Download .rle</button>
+          </div>
+          <label class="lib-rle-label" style="margin-top:10px">Import (paste RLE)</label>
+          <textarea id="rleImportArea" class="lib-rle-area" placeholder="Paste RLE here…"></textarea>
+          <button id="rleLoadBtn" class="lib-save-btn" style="width:100%;margin-top:4px">Load from RLE</button>
+        </div>
+      </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
