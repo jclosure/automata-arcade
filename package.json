@@ -8,5 +8,8 @@
     "start": "node server.js",
     "serve": "node server.js",
     "check": "node --check app.js && node --check server.js"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.43.0"
   }
 }

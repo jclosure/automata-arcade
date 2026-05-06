@@ -32,6 +32,10 @@
   const tlSpeedLabel = document.getElementById("tlSpeedLabel");
   const tlPlayPause = document.getElementById("tlPlayPause");
   const tlRevPlay = document.getElementById("tlRevPlay");
+  const ruleInputEl = document.getElementById("ruleInput");
+  const kernelShapeEl = document.getElementById("kernelShape");
+  const kernelRadiusEl = document.getElementById("kernelRadius");
+  const kernelRadiusOut = document.getElementById("kernelRadiusOut");
 
   const state = {
     sharedState: true,
@@ -74,6 +78,80 @@
     histFrames: [],
     histCursor: -1,
     playReverse: false,
+    ruleB: new Set([3]),
+    ruleS: new Set([2, 3]),
+    kernelShape: "moore",
+    kernelRadius: 1,
+    driftX: 0,
+    driftY: 0,
+    colorByAge: false,
+    showTrails: false,
+    trailDecay: 0.88,
+    repulseEnabled: false,
+    repulseAge: 20,
+    repulseStrength: 1,
+    contigRepulseEnabled: false,
+    contigRepulseRadius: 30,
+    contigRepulseForce: 1.0,
+    contigMinSize: 5,
+    ruleB2: new Set([3, 6]),
+    ruleS2: new Set([2, 3]),
+    ruleCycleActive: false,
+    ruleCyclePeriod: 60,
+    _ruleDirty: false,
+    leniaMode: false,
+    leniaDecay: 0.95,
+    leniaMu: 0.15,
+    leniaSigma: 0.017,
+    leniaTimeStep: 0.1,
+    cellTypesEnabled: false,
+    paintType: 0,
+    typeAColor: "#5be0bc",
+    typeBColor: "#f2b84b",
+    typeARuleB: new Set([3]),
+    typeARuleS: new Set([2, 3]),
+    typeBRuleB: new Set([3, 6]),
+    typeBRuleS: new Set([2, 3]),
+    heatmapMode: false,
+    heatmapOverlay: false,
+    entrenchEnabled: false,
+    entrenchThreshold: 8,
+    adaptRulesEnabled: false,
+    adaptTarget: 400,
+    adaptRate: 80,
+    _adaptPrevPop: 0,
+    rulesZoneEnabled: false,
+    rulesZoneAxis: "x",
+    rulesZoneOffset: 0,
+    rulesZoneRuleB2: new Set([3, 6]),
+    rulesZoneRuleS2: new Set([2, 3]),
+    forceFields: [],
+    canvasMode: "paint",  // "paint" | "move" | "select" | "force"
+    forcePaintType: "attract",
+    forcePaintRadius: 15,
+    forcePaintStrength: 3,
+    densityFeedback: false,
+    densityTarget: 500,
+    densityStrength: 1,
+    selection: null,
+    _selStartCell: null,
+    _selCells: null,
+    _selMoving: false,
+    _selMoveOriginCell: null,
+    _selMoveDelta: { dx: 0, dy: 0 },
+    _clipboard: null,
+    notebook: {
+      entries: [],
+      open: false,
+      pinMode: false,
+      _pendingPin: null,
+      autoEnabled: true,
+      _watch: { lastPop: -1, peakPop: 0, stableSince: null, stableLogged: false, lastAutoGen: -Infinity },
+      _nextId: 1,
+      _colorIdx: 0,
+      scenePlaying: false,
+      _sceneTimer: null,
+    },
     sphereRotX: 0.4,
     sphereRotY: 0,
     sphereDrag: false,
@@ -90,10 +168,103 @@
   const MAX_HIST = 600;
   const SPEED_TIERS = [1, 2, 4, 8, 15, 25, 30];
   const SPEED_LABELS = ["1×", "2×", "4×", "8×", "15×", "25×", "30×"];
+  const NB_COLORS = ['#5be0bc', '#f2b84b', '#e05b7a', '#9b7be8', '#5bc4e0', '#e0c45b'];
+  const LS_NOTEBOOK = 'aa_notebook';
+
+  // Precomputed age→color gradient: teal (newborn) → amber → warm white (ancient)
+  const AGE_COLORS = (() => {
+    const out = [];
+    for (let i = 0; i <= 100; i++) {
+      let r, g, b;
+      if (i < 10) {
+        const t = i / 10;
+        r = Math.round(91 + 151 * t);
+        g = Math.round(224 - 40 * t);
+        b = Math.round(188 - 113 * t);
+      } else if (i < 50) {
+        const t = (i - 10) / 40;
+        r = Math.round(242 + 13 * t);
+        g = Math.round(184 + 56 * t);
+        b = Math.round(75 + 129 * t);
+      } else {
+        r = 255; g = 240; b = 204;
+      }
+      out.push(`rgb(${r},${g},${b})`);
+    }
+    return out;
+  })();
+
+  // Precomputed Lenia value→color gradient: black → deep-violet → teal → amber → white
+  const LENIA_COLORS = (() => {
+    const out = [];
+    for (let i = 0; i <= 100; i++) {
+      let r, g, b;
+      if (i < 20) {
+        const t = i / 20;
+        r = Math.round(20 * t);
+        g = 0;
+        b = Math.round(60 * t);
+      } else if (i < 50) {
+        const t = (i - 20) / 30;
+        r = Math.round(20 + 71 * t);
+        g = Math.round(110 * t);
+        b = Math.round(60 + 128 * t);
+      } else if (i < 80) {
+        const t = (i - 50) / 30;
+        r = Math.round(91 + 151 * t);
+        g = Math.round(110 + 114 * t);
+        b = Math.round(188 - 113 * t);
+      } else {
+        const t = (i - 80) / 20;
+        r = 255;
+        g = Math.round(224 + 16 * t);
+        b = Math.round(75 + 129 * t);
+      }
+      out.push(`rgb(${r},${g},${b})`);
+    }
+    return out;
+  })();
+
+  // Precomputed heatmap gradient: transparent → navy → teal → amber → hot-white
+  const HEAT_COLORS = (() => {
+    const out = [];
+    for (let i = 0; i <= 100; i++) {
+      let r, g, b, a;
+      if (i < 15) {
+        const t = i / 15;
+        r = 0; g = Math.round(30 * t); b = Math.round(100 * t); a = t * 0.6;
+      } else if (i < 40) {
+        const t = (i - 15) / 25;
+        r = Math.round(0 + 91 * t); g = Math.round(30 + 194 * t); b = Math.round(100 + 88 * t); a = 0.6 + t * 0.2;
+      } else if (i < 75) {
+        const t = (i - 40) / 35;
+        r = Math.round(91 + 151 * t); g = Math.round(224 - 40 * t); b = Math.round(188 - 113 * t); a = 0.8 + t * 0.15;
+      } else {
+        const t = (i - 75) / 25;
+        r = 255; g = Math.round(184 + 71 * t); b = Math.round(75 + 129 * t); a = 0.95 + t * 0.05;
+      }
+      out.push(`rgba(${r},${g},${b},${a.toFixed(2)})`);
+    }
+    return out;
+  })();
+
   let sphereThree = null;
   let manifoldThree = null;
   let _threeRenderer = null;
   let threeDInputSetup = false;
+  let _kernelOffsets = null;
+  let _kernelCacheKey = null;
+  let _driftAccX = 0;
+  let _driftAccY = 0;
+  let cellAgeMap = new Map();
+  let trailMap = new Map();
+  let _contigAccum = new Map();
+  let valueMap = new Map();
+  let typeMap = new Map();
+  let _syncActivePreset = () => {};
+  let _ruleInput2El = null;
+  let heatMap = new Map();
+  let entrenchMap = new Map();
 
   const REQUIRED_PREFABS = [
     {
@@ -920,28 +1091,26 @@
         hints: [
           "Press Play and watch the two streams converge toward the centre of the board.",
           "Each opposing pair produces a brief flash then vanishes. Cancellation repeats every 30 generations.",
-          "The red zone stays empty if the guns are correctly aligned. If it lights up, the streams are out of phase.",
+          "The red danger zone is placed on the SE glider's path. It stays empty because every glider is intercepted before reaching it.",
         ],
       },
       setup() {
-        state.cameraX = 72; state.cameraY = 50; state.zoom = 8;
-        seedFromPattern("gosper", 35, 20);
-        seedFromPattern("gosper-nw", 80, 64);
+        state.cameraX = 80; state.cameraY = 48; state.zoom = 7;
+        seedFromPattern("gosper", 32, 30);
+        seedFromPattern("gosper", 112, 61, { rotate: 180 });
         return {
           type: "prevent",
-          dangerZone: { x: 99, y: 70, w: 10, h: 10, breached: false },
+          dangerZone: { x: 88, y: 62, w: 8, h: 8, breached: false },
         };
       },
       evaluate(levelState) {
         const dz = levelState.dangerZone;
         if (!dz.breached && anyAliveInZone(dz)) {
           dz.breached = true;
+          return { fail: true, msg: "Signal broke through. Cancellation failed — a glider reached the danger zone." };
         }
         if (state.generation >= 200 && !dz.breached) {
           return { win: true, msg: "Annihilation confirmed. NOT gate operating." };
-        }
-        if (dz.breached && state.generation >= 150) {
-          return { fail: true, msg: "Signal broke through. Cancellation failed — gun alignment needs tuning." };
         }
         if (state.generation >= this.genLimit) {
           return dz.breached
@@ -952,6 +1121,152 @@
       },
       progress(levelState) {
         return `Danger zone: ${levelState.dangerZone.breached ? "BREACHED" : "clear"}`;
+      },
+    },
+    {
+      name: "CA-5 OR Gate",
+      vibe: "Two independent streams, one logical output. Either signal wins.",
+      objective: "Let either receptor fire.",
+      genLimit: 300,
+      guide: {
+        concept: "OR Gate",
+        body: "An OR gate fires when any input is high. Two independent Gosper streams each aim at their own receptor. The OR condition is satisfied if either one lands. Try blocking one gun with an Eater — the other stream still wins.",
+        hints: [
+          "Press Play. Both guns fire SE gliders every 30 generations.",
+          "Drag an Eater-1 from the palette onto one of the gun streams to absorb it.",
+          "The second gun keeps firing — the OR condition is still met. Any single input is enough.",
+        ],
+      },
+      setup() {
+        state.cameraX = 60; state.cameraY = 55; state.zoom = 7;
+        seedFromPattern("gosper", 30, 18);
+        seedFromPattern("gosper", 30, 53);
+        return {
+          type: "switches",
+          switches: [
+            { x: 65, y: 46, w: 9, h: 9, hit: false },
+            { x: 65, y: 81, w: 9, h: 9, hit: false },
+          ],
+          hitsNeeded: 1,
+          hits: 0,
+        };
+      },
+      evaluate(levelState) {
+        for (const sw of levelState.switches) {
+          if (!sw.hit && anyAliveInZone(sw)) {
+            sw.hit = true;
+            levelState.hits++;
+            registerArcadeEvent("receptor", 200, sw);
+          }
+        }
+        if (levelState.hits >= 1) {
+          return { win: true, msg: "Signal received. OR gate confirmed — any input produces output." };
+        }
+        if (state.generation >= this.genLimit) {
+          return { fail: true, msg: "No stream reached a receptor." };
+        }
+        return null;
+      },
+      progress(levelState) {
+        return `Receptors: ${levelState.hits}/1 (OR — either suffices)`;
+      },
+    },
+    {
+      name: "CA-6 AND Gate",
+      vibe: "Two streams, two required targets. All inputs must succeed.",
+      objective: "Both receptors must fire.",
+      genLimit: 300,
+      guide: {
+        concept: "AND Gate",
+        body: "An AND gate requires every input to be high before the output fires. Two independent streams each target a separate receptor — both must land. Block either gun with an Eater and you fail, even though the other stream succeeds.",
+        hints: [
+          "Press Play — both guns must reach both receptors before gen 300.",
+          "Try placing an Eater on one stream. The remaining receptor fires, but the mission still fails.",
+          "AND logic: partial success is not success. Every condition must be met.",
+        ],
+      },
+      setup() {
+        state.cameraX = 60; state.cameraY = 55; state.zoom = 7;
+        seedFromPattern("gosper", 30, 18);
+        seedFromPattern("gosper", 30, 53);
+        return {
+          type: "switches",
+          switches: [
+            { x: 65, y: 46, w: 9, h: 9, hit: false },
+            { x: 65, y: 81, w: 9, h: 9, hit: false },
+          ],
+        };
+      },
+      evaluate(levelState) {
+        for (const sw of levelState.switches) {
+          if (!sw.hit && anyAliveInZone(sw)) {
+            sw.hit = true;
+            registerArcadeEvent("receptor", 200, sw);
+          }
+        }
+        const hits = levelState.switches.filter((s) => s.hit).length;
+        if (hits >= 2) {
+          return { win: true, msg: "Both signals received. AND gate confirmed — all inputs required." };
+        }
+        if (state.generation >= this.genLimit) {
+          return hits >= 2
+            ? { win: true, msg: "AND gate confirmed." }
+            : { fail: true, msg: "Not all receptors triggered. AND requires every input." };
+        }
+        return null;
+      },
+      progress(levelState) {
+        const hits = levelState.switches.filter((s) => s.hit).length;
+        return `Receptors: ${hits}/2 (AND — all required)`;
+      },
+    },
+    {
+      name: "CA-7 Signal Crossing",
+      vibe: "One stream heads right-down, the other left-down — they cross in the centre.",
+      objective: "Both receptors must fire. Both streams reach their targets.",
+      genLimit: 500,
+      guide: {
+        concept: "Signal Crossing",
+        body: "An SE stream and a SW stream travel on completely different diagonal rails. SE gliders go (+1,+1) every 4 gens; SW gliders go (-1,+1). Their geometric paths cross in the centre of the board, yet gliders on perpendicular diagonal families cannot interact — both streams deliver their packets intact.",
+        hints: [
+          "Press Play. The SE gun (top-left) fires down-right. The SW gun (top-right) fires down-left.",
+          "Watch the crossing zone near the centre — the streams converge, pass through the same region, then diverge to their receptors.",
+          "Both receptors eventually fire: SE stream → lower-right receptor, SW stream → lower-left receptor. Different diagonal families — no collision.",
+        ],
+      },
+      setup() {
+        state.cameraX = 75; state.cameraY = 58; state.zoom = 6;
+        seedFromPattern("gosper", 15, 5);
+        seedFromPattern("gosper", 130, 5, { rotate: 90 });
+        return {
+          type: "switches",
+          switches: [
+            { x: 105, y: 70, w: 12, h: 12, hit: false },
+            { x: 44, y: 100, w: 12, h: 12, hit: false },
+          ],
+        };
+      },
+      evaluate(levelState) {
+        for (const sw of levelState.switches) {
+          if (!sw.hit && anyAliveInZone(sw)) {
+            sw.hit = true;
+            registerArcadeEvent("receptor", 300, sw);
+          }
+        }
+        const hits = levelState.switches.filter((s) => s.hit).length;
+        if (hits >= 2) {
+          return { win: true, msg: "Both streams delivered. Signal crossing confirmed — perpendicular diagonal families, zero collision." };
+        }
+        if (state.generation >= this.genLimit) {
+          return hits >= 2
+            ? { win: true, msg: "Signal crossing confirmed." }
+            : { fail: true, msg: `Only ${hits}/2 receptors hit. Check that both streams have a clear path.` };
+        }
+        return null;
+      },
+      progress(levelState) {
+        const hits = levelState.switches.filter((s) => s.hit).length;
+        return `Receptors: ${hits}/2`;
       },
     },
   ];
@@ -1106,7 +1421,15 @@
     const k = normCoord(x, y);
     if (k === null) return;
     const s = activeAlive();
-    if (alive) s.add(k); else s.delete(k);
+    if (alive) {
+      s.add(k);
+      if (state.leniaMode) valueMap.set(k, 1.0);
+      if (state.cellTypesEnabled) typeMap.set(k, state.paintType);
+    } else {
+      s.delete(k);
+      valueMap.delete(k);
+      typeMap.delete(k);
+    }
   }
 
   function placeCells(cells, originX, originY) {
@@ -1126,6 +1449,16 @@
     state.histFrames = [];
     state.histCursor = -1;
     state.playReverse = false;
+    cellAgeMap.clear();
+    trailMap.clear();
+    _contigAccum.clear();
+    valueMap.clear();
+    typeMap.clear();
+    heatMap.clear();
+    entrenchMap.clear();
+    state._adaptPrevPop = 0;
+    _driftAccX = 0;
+    _driftAccY = 0;
     setOverlay("");
     hideGuide();
     updateHud();
@@ -1149,8 +1482,47 @@
     return transformed.map(([x, y]) => [x - minX, y - minY]);
   }
 
+  const LS_CUSTOM_PREFABS = "aa_custom_prefabs";
+
   function getPrefabById(id) {
-    return PREFABS.find((p) => p.id === id);
+    return PREFABS.find((p) => p.id === id)
+      || lsLoad(LS_CUSTOM_PREFABS).find((p) => p.id === id)
+      || null;
+  }
+
+  function captureSelection(name, desc) {
+    const sel = state.selection;
+    if (!sel || sel.w <= 0 || sel.h <= 0) return false;
+    const x1 = sel.x, y1 = sel.y, x2 = sel.x + sel.w, y2 = sel.y + sel.h;
+    const cells = [];
+    for (const k of activeAlive()) {
+      const [col, row] = parseKey(k);
+      if (col >= x1 && col < x2 && row >= y1 && row < y2) {
+        cells.push([col - x1, row - y1]);
+      }
+    }
+    if (cells.length === 0) return false;
+    const prefab = {
+      id: "custom_" + Date.now(),
+      name: name || "Custom Pattern",
+      type: "custom",
+      category: "Custom",
+      desc: desc || `${cells.length} cells, ${sel.w}×${sel.h}`,
+      tip: "",
+      period: 0,
+      cells,
+    };
+    const all = lsLoad(LS_CUSTOM_PREFABS);
+    all.push(prefab);
+    lsSave(LS_CUSTOM_PREFABS, all);
+    buildPalette();
+    return true;
+  }
+
+  function deleteCustomPrefab(id) {
+    lsSave(LS_CUSTOM_PREFABS, lsLoad(LS_CUSTOM_PREFABS).filter((p) => p.id !== id));
+    if (state.selectedPrefabId === id) state.selectedPrefabId = PREFABS[0].id;
+    buildPalette();
   }
 
   function placePrefab(id, gx, gy, opts = {}) {
@@ -1162,30 +1534,474 @@
     placeCells(cells, gx, gy);
   }
 
+  function ageColor(age) {
+    return AGE_COLORS[Math.min(age, AGE_COLORS.length - 1)];
+  }
+
+  function leniaColor(v) {
+    return LENIA_COLORS[Math.min(100, Math.max(0, Math.round(v * 100)))];
+  }
+
+  function heatColor(count, maxCount) {
+    const idx = Math.min(100, Math.round((count / Math.max(1, maxCount)) * 100));
+    return HEAT_COLORS[idx];
+  }
+
+  function getFieldBonus(col, row) {
+    let bonus = 0;
+    for (const ff of state.forceFields) {
+      const dist = Math.sqrt((col - ff.x) ** 2 + (row - ff.y) ** 2);
+      if (dist < ff.radius) {
+        const t = 1 - dist / ff.radius;
+        const delta = Math.round(ff.strength * t);
+        bonus += ff.type === "attract" ? delta : -delta;
+      }
+    }
+    return bonus;
+  }
+
+  function applyDrift(aliveSet, ageMap, tMap) {
+    const dx = state.driftX;
+    const dy = state.driftY;
+    if (dx === 0 && dy === 0) return { alive: aliveSet, ages: ageMap, types: tMap };
+
+    _driftAccX += dx;
+    _driftAccY += dy;
+    const intX = Math.trunc(_driftAccX);
+    const intY = Math.trunc(_driftAccY);
+    _driftAccX -= intX;
+    _driftAccY -= intY;
+
+    if (intX === 0 && intY === 0) return { alive: aliveSet, ages: ageMap, types: tMap };
+
+    const surface = activeSurface();
+    const shifted = new Set();
+    const shiftedAges = new Map();
+    const shiftedTypes = tMap ? new Map() : null;
+    for (const k of aliveSet) {
+      const [c, r] = parseKey(k);
+      const nk = surface.cellKey(c + intX, r + intY);
+      if (nk !== null) {
+        shifted.add(nk);
+        shiftedAges.set(nk, ageMap.get(k) ?? 0);
+        if (shiftedTypes && tMap.has(k)) shiftedTypes.set(nk, tMap.get(k));
+      }
+    }
+    return { alive: shifted, ages: shiftedAges, types: shiftedTypes };
+  }
+
+  function ruleToString(B, S) {
+    const b = [...B].sort((a, x) => a - x).join("");
+    const s = [...S].sort((a, x) => a - x).join("");
+    return `B${b}/S${s}`;
+  }
+
+  function parseRule(str) {
+    const m = str.toUpperCase().match(/^B([0-8]*)\/?S([0-8]*)$/);
+    if (!m) return null;
+    return {
+      B: new Set(m[1].split("").filter(Boolean).map(Number)),
+      S: new Set(m[2].split("").filter(Boolean).map(Number)),
+    };
+  }
+
+  function setRule(str) {
+    const r = parseRule(str);
+    if (!r) return false;
+    state.ruleB = r.B;
+    state.ruleS = r.S;
+    return true;
+  }
+
+  function getKernelOffsets() {
+    const cacheKey = `${state.kernelShape}:${state.kernelRadius}`;
+    if (_kernelCacheKey === cacheKey) return _kernelOffsets;
+
+    const r = state.kernelRadius;
+    const offsets = [];
+
+    switch (state.kernelShape) {
+      case "moore":
+        for (let dr = -r; dr <= r; dr++)
+          for (let dc = -r; dc <= r; dc++)
+            if (dc !== 0 || dr !== 0) offsets.push([dc, dr]);
+        break;
+      case "vonNeumann":
+        for (let dr = -r; dr <= r; dr++)
+          for (let dc = -r; dc <= r; dc++)
+            if ((dc !== 0 || dr !== 0) && Math.abs(dc) + Math.abs(dr) <= r)
+              offsets.push([dc, dr]);
+        break;
+      case "ring":
+        for (let dr = -r; dr <= r; dr++)
+          for (let dc = -r; dc <= r; dc++)
+            if (Math.max(Math.abs(dc), Math.abs(dr)) === r) offsets.push([dc, dr]);
+        break;
+      case "cross":
+        for (let i = 1; i <= r; i++)
+          offsets.push([i, 0], [-i, 0], [0, i], [0, -i]);
+        break;
+      case "hex":
+        offsets.push([1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]);
+        break;
+      case "knight":
+        for (const [a, b] of [[1, 2], [2, 1]])
+          for (const sx of [1, -1])
+            for (const sy of [1, -1])
+              offsets.push([a * sx, b * sy]);
+        break;
+    }
+
+    _kernelOffsets = offsets;
+    _kernelCacheKey = cacheKey;
+    return offsets;
+  }
+
+  const MAX_CELLS_CONTIG = 4000;
+
+  function findComponents(aliveSet, minSize) {
+    if (aliveSet.size > MAX_CELLS_CONTIG) return [];
+    const surface = activeSurface();
+    const visited = new Set();
+    const comps = [];
+    for (const k of aliveSet) {
+      if (visited.has(k)) continue;
+      const comp = [];
+      const stack = [k];
+      visited.add(k);
+      while (stack.length) {
+        const curr = stack.pop();
+        comp.push(curr);
+        const [cx, cy] = parseKey(curr);
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (!dc && !dr) continue;
+            const nk = surface.cellKey(cx + dc, cy + dr);
+            if (nk && aliveSet.has(nk) && !visited.has(nk)) {
+              visited.add(nk);
+              stack.push(nk);
+            }
+          }
+        }
+      }
+      if (comp.length >= minSize) comps.push(comp);
+    }
+    return comps;
+  }
+
+  function applyContigRepulsion() {
+    const aliveSet = activeAlive();
+    const comps = findComponents(aliveSet, state.contigMinSize);
+    if (comps.length < 2) return;
+
+    const R = state.contigRepulseRadius;
+    const F = state.contigRepulseForce;
+    const surface = activeSurface();
+
+    const centroids = comps.map((comp) => {
+      let sx = 0, sy = 0;
+      for (const k of comp) { const [x, y] = parseKey(k); sx += x; sy += y; }
+      return { x: sx / comp.length, y: sy / comp.length };
+    });
+
+    const forces = comps.map(() => ({ x: 0, y: 0 }));
+    for (let i = 0; i < comps.length; i++) {
+      for (let j = i + 1; j < comps.length; j++) {
+        const dx = centroids[i].x - centroids[j].x;
+        const dy = centroids[i].y - centroids[j].y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > R * R || d2 < 1) continue;
+        const d = Math.sqrt(d2);
+        const mag = F / d2;
+        forces[i].x += (dx / d) * mag;
+        forces[i].y += (dy / d) * mag;
+        forces[j].x -= (dx / d) * mag;
+        forces[j].y -= (dy / d) * mag;
+      }
+    }
+
+    const shifts = [];
+    for (let i = 0; i < comps.length; i++) {
+      if (forces[i].x === 0 && forces[i].y === 0) continue;
+      const ck = `${Math.round(centroids[i].x / 8)},${Math.round(centroids[i].y / 8)}`;
+      const acc = _contigAccum.get(ck) ?? { x: 0, y: 0 };
+      acc.x += forces[i].x;
+      acc.y += forces[i].y;
+      const intX = Math.trunc(acc.x);
+      const intY = Math.trunc(acc.y);
+      acc.x -= intX;
+      acc.y -= intY;
+      _contigAccum.set(ck, acc);
+      if (intX !== 0 || intY !== 0) shifts.push({ comp: comps[i], intX, intY });
+    }
+
+    if (shifts.length === 0) return;
+
+    const target = state.sharedState ? state.alive : state.modeAlive[state.mode];
+    for (const { comp, intX, intY } of shifts) {
+      const moved = comp.map((k) => {
+        const age = cellAgeMap.get(k) ?? 0;
+        target.delete(k);
+        cellAgeMap.delete(k);
+        const [x, y] = parseKey(k);
+        const nk = surface.cellKey(x + intX, y + intY);
+        return nk ? { nk, age } : null;
+      }).filter(Boolean);
+      for (const { nk, age } of moved) {
+        target.add(nk);
+        cellAgeMap.set(nk, age);
+      }
+    }
+  }
+
+  function stepLenia() {
+    const surface = activeSurface();
+    const offsets = getKernelOffsets();
+    const nCount = Math.max(1, offsets.length);
+    const mu = state.leniaMu;
+    const sigma = state.leniaSigma;
+    const dt = state.leniaTimeStep;
+    const THRESH = 0.02;
+
+    // Seed from alive set if valueMap is empty
+    if (valueMap.size === 0) {
+      for (const k of activeAlive()) valueMap.set(k, 1.0);
+    }
+
+    // Convolve: each live cell broadcasts its value to neighbors
+    const neighborSums = new Map();
+    for (const [k, v] of valueMap) {
+      const [c, r] = parseKey(k);
+      for (const [dc, dr] of offsets) {
+        const nk = surface.cellKey(c + dc, r + dr);
+        if (nk) neighborSums.set(nk, (neighborSums.get(nk) || 0) + v);
+      }
+    }
+    // Ensure every existing cell is in the sum map (even if neighbors didn't reach it)
+    for (const k of valueMap.keys()) {
+      if (!neighborSums.has(k)) neighborSums.set(k, 0);
+    }
+
+    // Growth function: Gaussian around mu
+    const nextMap = new Map();
+    for (const [k, sum] of neighborSums) {
+      const u = sum / nCount;
+      const g = Math.exp(-0.5 * ((u - mu) / sigma) ** 2);
+      const old = valueMap.get(k) ?? 0;
+      const nv = Math.max(0, Math.min(1, old + dt * (2 * g - 1)));
+      if (nv > THRESH) nextMap.set(k, nv);
+    }
+
+    // Apply drift: compute shift, move alive set and valueMap together
+    const dx = state.driftX, dy = state.driftY;
+    let nextAlive;
+    if (dx !== 0 || dy !== 0) {
+      _driftAccX += dx; _driftAccY += dy;
+      const intX = Math.trunc(_driftAccX);
+      const intY = Math.trunc(_driftAccY);
+      _driftAccX -= intX; _driftAccY -= intY;
+      if (intX !== 0 || intY !== 0) {
+        const shiftedValues = new Map();
+        const shiftedAlive = new Set();
+        for (const [k, v] of nextMap) {
+          const [c, r] = parseKey(k);
+          const nk = surface.cellKey(c + intX, r + intY);
+          if (nk) { shiftedValues.set(nk, v); shiftedAlive.add(nk); }
+        }
+        valueMap = shiftedValues;
+        nextAlive = shiftedAlive;
+      } else {
+        valueMap = nextMap;
+        nextAlive = new Set(nextMap.keys());
+      }
+    } else {
+      valueMap = nextMap;
+      nextAlive = new Set(nextMap.keys());
+    }
+
+    if (state.sharedState) state.alive = nextAlive;
+    else state.modeAlive[state.mode] = nextAlive;
+    state.generation += 1;
+
+    if (state.mode === "arcade") {
+      if (state.comboTimer > 0) state.comboTimer -= 1;
+      else state.combo = 1;
+      state.score += 1;
+      evaluateArcadeState();
+    }
+    if (state.zoneFlash.length > 0) {
+      for (const z of state.zoneFlash) z.ttl -= 1;
+      state.zoneFlash = state.zoneFlash.filter((z) => z.ttl > 0);
+    }
+  }
+
   function stepLife() {
     const alive = activeAlive();
     const surface = activeSurface();
     const neighborCounts = new Map();
 
+    const offsets = getKernelOffsets();
+    const repulse = state.repulseEnabled;
+    const repulseAge = state.repulseAge;
+    const repulseStrength = state.repulseStrength;
     for (const k of alive) {
       const [c, r] = parseKey(k);
-      for (let dr = -1; dr <= 1; dr += 1) {
-        for (let dc = -1; dc <= 1; dc += 1) {
-          if (dc === 0 && dr === 0) continue;
-          const nk = surface.cellKey(c + dc, r + dr);
-          if (nk !== null) neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + 1);
-        }
+      const w = (repulse && (cellAgeMap.get(k) ?? 0) >= repulseAge) ? -repulseStrength : 1;
+      for (const [dc, dr] of offsets) {
+        const nk = surface.cellKey(c + dc, r + dr);
+        if (nk !== null) neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + w);
       }
     }
 
     const next = new Set();
-    for (const [k, n] of neighborCounts) {
-      if (n === 3 || (alive.has(k) && n === 2)) next.add(k);
+    const nextAgeMap = new Map();
+    const nextTypeMap = state.cellTypesEnabled ? new Map() : null;
+
+    if (state.cellTypesEnabled) {
+      // Per-type neighbor counts
+      const countsA = new Map();
+      const countsB = new Map();
+      for (const k of alive) {
+        const [c, r] = parseKey(k);
+        const isA = (typeMap.get(k) ?? 0) === 0;
+        const w = (repulse && (cellAgeMap.get(k) ?? 0) >= repulseAge) ? -repulseStrength : 1;
+        for (const [dc, dr] of offsets) {
+          const nk = surface.cellKey(c + dc, r + dr);
+          if (nk === null) continue;
+          if (isA) countsA.set(nk, (countsA.get(nk) || 0) + w);
+          else countsB.set(nk, (countsB.get(nk) || 0) + w);
+        }
+      }
+      // Evaluate per-cell survival/birth using each type's own rules
+      const allCells = new Set([...neighborCounts.keys()]);
+      for (const k of allCells) {
+        const na = countsA.get(k) || 0;
+        const nb = countsB.get(k) || 0;
+        const n = neighborCounts.get(k) || 0;
+        const wasAlive = alive.has(k);
+        const myType = typeMap.get(k) ?? 0;
+        const bornA = state.typeARuleB, survA = state.typeARuleS;
+        const bornB = state.typeBRuleB, survB = state.typeBRuleS;
+        let survives = false;
+        if (wasAlive) {
+          survives = myType === 0 ? survA.has(n) : survB.has(n);
+        } else {
+          survives = bornA.has(n) || bornB.has(n);
+        }
+        if (survives) {
+          next.add(k);
+          nextAgeMap.set(k, wasAlive ? (cellAgeMap.get(k) ?? 0) + 1 : 1);
+          // Inherit type: majority vote among type-A vs type-B neighbors
+          if (!wasAlive) {
+            nextTypeMap.set(k, na >= nb ? 0 : 1);
+          } else {
+            nextTypeMap.set(k, myType);
+          }
+        }
+      }
+    } else {
+      const densityBonus = state.densityFeedback
+        ? Math.sign(state.densityTarget - alive.size) * state.densityStrength
+        : 0;
+      const hasZone   = state.rulesZoneEnabled;
+      const hasFields = state.forceFields.length > 0;
+      const adjusted  = densityBonus !== 0 || hasZone || hasFields;
+
+      if (!adjusted) {
+        const born = state.ruleB;
+        const survive = state.ruleS;
+        for (const [k, n] of neighborCounts) {
+          if (born.has(n) || (alive.has(k) && survive.has(n))) {
+            next.add(k);
+            nextAgeMap.set(k, alive.has(k) ? (cellAgeMap.get(k) ?? 0) + 1 : 1);
+          }
+        }
+      } else {
+        for (const [k, n] of neighborCounts) {
+          const [col, row] = parseKey(k);
+          const inZone2 = hasZone && (state.rulesZoneAxis === "x"
+            ? col >= state.rulesZoneOffset
+            : row >= state.rulesZoneOffset);
+          const born    = inZone2 ? state.rulesZoneRuleB2 : state.ruleB;
+          const survive = inZone2 ? state.rulesZoneRuleS2 : state.ruleS;
+          const adj = Math.max(0, n + (hasFields ? getFieldBonus(col, row) : 0) + densityBonus);
+          if (born.has(adj) || (alive.has(k) && survive.has(adj))) {
+            next.add(k);
+            nextAgeMap.set(k, alive.has(k) ? (cellAgeMap.get(k) ?? 0) + 1 : 1);
+          }
+        }
+      }
     }
 
-    if (state.sharedState) state.alive = next;
-    else state.modeAlive[state.mode] = next;
+    const drifted = applyDrift(next, nextAgeMap, nextTypeMap);
+    cellAgeMap = drifted.ages;
+    if (nextTypeMap) {
+      typeMap = drifted.types ?? nextTypeMap;
+    }
+
+    if (state.sharedState) state.alive = drifted.alive;
+    else state.modeAlive[state.mode] = drifted.alive;
     state.generation += 1;
+
+    if (state.contigRepulseEnabled) applyContigRepulsion();
+
+    if (state.showTrails) {
+      for (const k of alive) {
+        if (!drifted.alive.has(k)) trailMap.set(k, 1.0);
+      }
+      for (const [k, v] of trailMap) {
+        if (drifted.alive.has(k)) { trailMap.delete(k); continue; }
+        const nv = v * state.trailDecay;
+        if (nv < 0.02) trailMap.delete(k);
+        else trailMap.set(k, nv);
+      }
+    }
+
+    if (state.ruleCycleActive && state.generation > 0 && state.generation % state.ruleCyclePeriod === 0) {
+      [state.ruleB, state.ruleB2] = [state.ruleB2, state.ruleB];
+      [state.ruleS, state.ruleS2] = [state.ruleS2, state.ruleS];
+      state._ruleDirty = true;
+    }
+
+    // Heatmap accumulation
+    if (state.heatmapMode || state.heatmapOverlay) {
+      for (const k of drifted.alive) {
+        heatMap.set(k, (heatMap.get(k) || 0) + 1);
+      }
+    }
+
+    // Trail entrenchment: cells that die repeatedly get carved in
+    if (state.entrenchEnabled) {
+      for (const k of alive) {
+        if (!drifted.alive.has(k)) {
+          const count = (entrenchMap.get(k) || 0) + 1;
+          entrenchMap.set(k, count);
+        }
+      }
+    }
+
+    // Adaptive rules: pressure B/S toward a target population
+    if (state.adaptRulesEnabled && state.generation > 0 && state.generation % state.adaptRate === 0) {
+      const pop = drifted.alive.size;
+      const prev = state._adaptPrevPop;
+      state._adaptPrevPop = pop;
+      if (pop < state.adaptTarget * 0.7 && prev !== 0) {
+        // Too sparse: add a random birth neighbor count not already in ruleB
+        const candidates = [1,2,3,4,5,6,7,8].filter(n => !state.ruleB.has(n));
+        if (candidates.length > 0) {
+          state.ruleB = new Set([...state.ruleB, candidates[Math.floor(Math.random() * candidates.length)]]);
+          state._ruleDirty = true;
+        }
+      } else if (pop > state.adaptTarget * 1.3) {
+        // Too dense: remove a random survival neighbor count from ruleS
+        const surviving = [...state.ruleS];
+        if (surviving.length > 1) {
+          surviving.splice(Math.floor(Math.random() * surviving.length), 1);
+          state.ruleS = new Set(surviving);
+          state._ruleDirty = true;
+        }
+      }
+    }
 
     if (state.mode === "arcade") {
       if (state.comboTimer > 0) {
@@ -1757,17 +2573,90 @@
     const minY = state.cameraY - canvas.height / (2 * state.zoom) - 1;
     const maxY = state.cameraY + canvas.height / (2 * state.zoom) + 1;
     const pad = Math.max(1, Math.floor(state.zoom * 0.08));
-    ctx.fillStyle = "#8ef2ff";
-    for (const k of activeAlive()) {
-      const [col, row] = parseKey(k);
-      if (col < minX || col > maxX || row < minY || row > maxY) continue;
-      const screen = worldToScreen(col, row);
-      ctx.fillRect(
-        Math.floor(screen.x) + pad,
-        Math.floor(screen.y) + pad,
-        Math.ceil(state.zoom) - pad * 2,
-        Math.ceil(state.zoom) - pad * 2,
-      );
+    const cw = Math.ceil(state.zoom) - pad * 2;
+
+    // Entrench layer (deepest, always rendered under everything else)
+    if (state.entrenchEnabled && entrenchMap.size > 0) {
+      for (const [k, count] of entrenchMap) {
+        if (count < state.entrenchThreshold) continue;
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        const alpha = Math.min(0.85, 0.2 + (count - state.entrenchThreshold) * 0.04);
+        ctx.fillStyle = `rgba(60,80,180,${alpha.toFixed(2)})`;
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+    }
+
+    // Heatmap-only mode: render heat instead of live cells
+    if (state.heatmapMode && heatMap.size > 0) {
+      let maxCount = 1;
+      for (const v of heatMap.values()) if (v > maxCount) maxCount = v;
+      for (const [k, count] of heatMap) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillStyle = heatColor(count, maxCount);
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+      return;
+    }
+
+    if (state.showTrails && trailMap.size > 0) {
+      for (const [k, v] of trailMap) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillStyle = `rgba(142,242,255,${(v * 0.55).toFixed(3)})`;
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+    }
+
+    // Heatmap overlay on top of trails, under cells
+    if (state.heatmapOverlay && heatMap.size > 0) {
+      let maxCount = 1;
+      for (const v of heatMap.values()) if (v > maxCount) maxCount = v;
+      for (const [k, count] of heatMap) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillStyle = heatColor(count, maxCount);
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+    }
+
+    if (state.leniaMode && valueMap.size > 0) {
+      for (const [k, v] of valueMap) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillStyle = leniaColor(v);
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+    } else if (state.cellTypesEnabled) {
+      for (const k of activeAlive()) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillStyle = (typeMap.get(k) ?? 0) === 0 ? state.typeAColor : state.typeBColor;
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+    } else if (state.colorByAge) {
+      for (const k of activeAlive()) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillStyle = ageColor(cellAgeMap.get(k) ?? 0);
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
+    } else {
+      ctx.fillStyle = "#8ef2ff";
+      for (const k of activeAlive()) {
+        const [col, row] = parseKey(k);
+        if (col < minX || col > maxX || row < minY || row > maxY) continue;
+        const screen = worldToScreen(col, row);
+        ctx.fillRect(Math.floor(screen.x) + pad, Math.floor(screen.y) + pad, cw, cw);
+      }
     }
   }
 
@@ -1776,9 +2665,8 @@
     const zones = [];
     const ls = state.levelState;
     if (ls.receptor) zones.push({ ...ls.receptor, kind: "receptor" });
-    if (ls.switches) {
-      for (const sw of ls.switches) zones.push({ ...sw, kind: "switch" });
-    }
+    if (ls.receptors) for (const r of ls.receptors) zones.push({ ...r, kind: "receptor" });
+    if (ls.switches) for (const sw of ls.switches) zones.push({ ...sw, kind: "switch" });
     if (ls.beaconZone) zones.push({ ...ls.beaconZone, kind: "beacon" });
     if (ls.coreBlock) zones.push({ ...ls.coreBlock, kind: "core" });
     if (ls.dangerZone) zones.push({ ...ls.dangerZone, kind: "danger" });
@@ -1859,16 +2747,113 @@
     ctx.restore();
   }
 
+  function drawZoneBoundary() {
+    if (!state.rulesZoneEnabled) return;
+    ctx.save();
+    ctx.strokeStyle = "rgba(242,184,75,0.45)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    if (state.rulesZoneAxis === "x") {
+      const sx = worldToScreen(state.rulesZoneOffset, 0).x;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, canvas.height); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = "rgba(242,184,75,0.6)"; ctx.font = "11px monospace";
+      ctx.fillText("Zone 1", Math.max(4, sx - 54), 14);
+      ctx.fillText("Zone 2", sx + 5, 14);
+    } else {
+      const sy = worldToScreen(0, state.rulesZoneOffset).y;
+      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(canvas.width, sy); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = "rgba(242,184,75,0.6)"; ctx.font = "11px monospace";
+      ctx.fillText("Zone 1", 6, Math.max(14, sy - 4));
+      ctx.fillText("Zone 2", 6, sy + 14);
+    }
+    ctx.restore();
+  }
+
+  function drawForceFields() {
+    if (state.forceFields.length === 0 && (!state.canvasMode === "force" || !state.hoverCell)) return;
+    for (const ff of state.forceFields) {
+      const sc = worldToScreen(ff.x, ff.y);
+      const cx = sc.x + state.zoom * 0.5;
+      const cy = sc.y + state.zoom * 0.5;
+      const r  = ff.radius * state.zoom;
+      const rgb = ff.type === "attract" ? "91,224,188" : "255,107,107";
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${rgb},0.07)`; ctx.fill();
+      ctx.strokeStyle = `rgba(${rgb},0.5)`; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${rgb},0.9)`; ctx.fill();
+    }
+    if (state.canvasMode === "force" && state.hoverCell) {
+      const sc  = worldToScreen(state.hoverCell.x, state.hoverCell.y);
+      const cx  = sc.x + state.zoom * 0.5;
+      const cy  = sc.y + state.zoom * 0.5;
+      const r   = state.forcePaintRadius * state.zoom;
+      const rgb = state.forcePaintType === "attract" ? "91,224,188" : "255,107,107";
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${rgb},0.7)`; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawSelection() {
+    const sel = state.selection;
+    if (!sel || sel.w <= 0 || sel.h <= 0) return;
+    const z = state.zoom;
+    const ccx = canvas.width / 2;
+    const ccy = canvas.height / 2;
+    const { dx, dy } = state._selMoveDelta;
+    const ox = sel.x + dx, oy = sel.y + dy;
+
+    ctx.save();
+
+    if (state._selMoving && state._selCells) {
+      // Ghost cells at move-offset position
+      ctx.fillStyle = "rgba(242,184,75,0.45)";
+      for (const [cx, cy] of state._selCells) {
+        const px = (ox + cx - state.cameraX) * z + ccx;
+        const py = (oy + cy - state.cameraY) * z + ccy;
+        ctx.fillRect(px + 1, py + 1, z - 2, z - 2);
+      }
+    }
+
+    // Selection rectangle (amber when moving, teal when idle)
+    const sx = (ox - state.cameraX) * z + ccx;
+    const sy = (oy - state.cameraY) * z + ccy;
+    const sw = sel.w * z;
+    const sh = sel.h * z;
+    ctx.fillStyle = state._selMoving ? "rgba(242,184,75,0.06)" : "rgba(91,224,188,0.07)";
+    ctx.fillRect(sx, sy, sw, sh);
+    ctx.strokeStyle = state._selMoving ? "#f2b84b" : "#5be0bc";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(sx + 0.75, sy + 0.75, sw - 1.5, sh - 1.5);
+    ctx.setLineDash([]);
+
+    ctx.restore();
+  }
+
   function draw() {
     drawBackground();
     drawGrid();
     drawCells();
+    drawZoneBoundary();
+    drawForceFields();
     drawZones();
     drawManifoldBorder();
+    drawSelection();
+    drawNotebookPins();
     drawHover();
   }
 
   function updateHud() {
+    if (state._ruleDirty) {
+      ruleInputEl.value = ruleToString(state.ruleB, state.ruleS);
+      if (_ruleInput2El) _ruleInput2El.value = ruleToString(state.ruleB2, state.ruleS2);
+      _syncActivePreset();
+      state._ruleDirty = false;
+    }
     genOut.textContent = String(state.generation);
     popOut.textContent = String(activeAlive().size);
     scoreOut.textContent = String(state.score);
@@ -1907,11 +2892,22 @@
     else state.modeAlive[state.mode] = copy;
     state.generation = frame.gen;
     state.histCursor = idx;
+    cellAgeMap.clear();
+    trailMap.clear();
+    _contigAccum.clear();
+    valueMap.clear();
+    typeMap.clear();
+    heatMap.clear();
+    entrenchMap.clear();
+    _driftAccX = 0;
+    _driftAccY = 0;
   }
 
   function tickForward() {
-    stepLife();
+    if (state.leniaMode) stepLenia();
+    else stepLife();
     snapshotNow();
+    if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAuto();
   }
 
   function tickBackward() {
@@ -1944,6 +2940,7 @@
       tlProgress.style.width = "0%";
       tlThumb.style.left = "0%";
     }
+    nbUpdateMarkers();
   }
 
   // --- Main loop ---
@@ -2028,28 +3025,156 @@
     }
   }
 
+  function setCanvasMode(mode) {
+    // Restore lifted cells when leaving select mid-move
+    if (state.canvasMode === "select" && state._selMoving && state._selCells) {
+      const sel = state.selection;
+      for (const [ox, oy] of state._selCells) setCell(sel.x + ox, sel.y + oy, true);
+      state._selCells = null;
+      state._selMoving = false;
+      state._selMoveDelta = { dx: 0, dy: 0 };
+    }
+
+    state.canvasMode = mode;
+
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair" };
+    canvas.style.cursor = cursors[mode] || "default";
+
+    // Sync mode buttons
+    document.querySelectorAll(".mode-btn").forEach((btn) => {
+      btn.classList.toggle("mode-btn-active", btn.dataset.mode === mode);
+    });
+
+    // Sync selModeBtn in capture panel
+    const selModeBtn = document.getElementById("selModeBtn");
+    if (selModeBtn) selModeBtn.classList.toggle("rl-type-active", mode === "select");
+
+    // Sync forcePaintToggle in field panel
+    const fpt = document.getElementById("forcePaintToggle");
+    if (fpt) fpt.classList.toggle("rl-type-active", mode === "force");
+
+    // Update selInfo hint
+    const selInfoEl = document.getElementById("selInfo");
+    if (selInfoEl && mode === "select") selInfoEl.textContent = "Drag to select region";
+
+    // Pointer mode reset when switching away from a drag
+    if (!state.pointer.down) state.pointer.mode = null;
+  }
+
   function handlePointerDown(ev) {
     canvas.setPointerCapture(ev.pointerId);
     state.pointer.down = true;
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
 
-    if (state.keys.spaceDown || ev.button === 1) {
+    // Notebook pin drop mode intercepts left-click
+    if (state.notebook.pinMode && ev.button === 0) {
+      const rect = canvas.getBoundingClientRect();
+      const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      state.notebook._pendingPin = { x: Math.floor(gxgy.x), y: Math.floor(gxgy.y) };
+      state.notebook.pinMode = false;
+      canvas.style.cursor = "";
+      document.getElementById("notebookBtn")?.classList.remove("nb-pin-active");
+      const px = document.getElementById("nbPinCX");
+      const py = document.getElementById("nbPinCY");
+      if (px) px.textContent = state.notebook._pendingPin.x;
+      if (py) py.textContent = state.notebook._pendingPin.y;
+      const prev = document.getElementById("nbPinPreview");
+      if (prev) prev.style.display = "";
+      nbOpenPanel();
+      nbShowForm();
+      ev.preventDefault();
+      return;
+    }
+
+    // Middle mouse always pans
+    if (ev.button === 1) {
       state.pointer.mode = "pan";
       return;
     }
 
-    if (ev.button !== 0) return;
+    if (ev.button !== 0 && ev.button !== 2) return;
     const rect = canvas.getBoundingClientRect();
     const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+
+    if (state.canvasMode === "move") {
+      state.pointer.mode = "pan";
+      canvas.style.cursor = "grabbing";
+      return;
+    }
+
+    if (state.canvasMode === "select") {
+      const cx = Math.floor(gxgy.x), cy = Math.floor(gxgy.y);
+      const sel = state.selection;
+      const insideSel = sel && sel.w > 0 && sel.h > 0
+        && cx >= sel.x && cx < sel.x + sel.w
+        && cy >= sel.y && cy < sel.y + sel.h;
+
+      if (insideSel) {
+        state.pointer.mode = "move";
+        state._selMoveOriginCell = { x: cx, y: cy };
+        state._selMoveDelta = { dx: 0, dy: 0 };
+        const cells = [];
+        const alive = activeAlive();
+        for (const k of alive) {
+          const [col, row] = parseKey(k);
+          if (col >= sel.x && col < sel.x + sel.w && row >= sel.y && row < sel.y + sel.h)
+            cells.push([col - sel.x, row - sel.y]);
+        }
+        for (const [ox, oy] of cells) alive.delete(key(sel.x + ox, sel.y + oy));
+        state._selCells = cells;
+        state._selMoving = true;
+      } else {
+        state.pointer.mode = "select";
+        state._selCells = null;
+        state._selMoving = false;
+        state._selMoveDelta = { dx: 0, dy: 0 };
+        state._selStartCell = { x: cx, y: cy };
+        state.selection = { x: cx, y: cy, w: 0, h: 0 };
+      }
+      return;
+    }
+
+    if (state.canvasMode === "force") {
+      state.pointer.mode = null;
+      if (ev.button === 2) {
+        state.forceFields = state.forceFields.filter((ff) =>
+          Math.sqrt((gxgy.x - ff.x) ** 2 + (gxgy.y - ff.y) ** 2) > ff.radius * 0.5);
+      } else {
+        state.forceFields.push({
+          id: Date.now() + Math.random(),
+          x: gxgy.x, y: gxgy.y,
+          radius: state.forcePaintRadius,
+          strength: state.forcePaintStrength,
+          type: state.forcePaintType,
+        });
+      }
+      return;
+    }
+
+    // paint mode (default)
     state.pointer.mode = "paint";
-    state.pointer.paintValue = isAlive(gxgy.x, gxgy.y) ? 0 : 1;
+    state.pointer.paintValue = ev.button === 2 ? 0 : (isAlive(gxgy.x, gxgy.y) ? 0 : 1);
     setCell(gxgy.x, gxgy.y, state.pointer.paintValue === 1);
   }
 
   function handlePointerMove(ev) {
     const rect = canvas.getBoundingClientRect();
     state.hoverCell = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+
+    // Update cursor when hovering (not dragging)
+    if (!state.pointer.down) {
+      if (state.canvasMode === "select") {
+        const sel = state.selection;
+        const hc = state.hoverCell;
+        const overSel = sel && sel.w > 0 && hc
+          && hc.x >= sel.x && hc.x < sel.x + sel.w
+          && hc.y >= sel.y && hc.y < sel.y + sel.h;
+        canvas.style.cursor = overSel ? "move" : "crosshair";
+      } else if (state.canvasMode === "move") {
+        canvas.style.cursor = "grab";
+      }
+    }
 
     if (!state.pointer.down) return;
 
@@ -2064,6 +3189,33 @@
       return;
     }
 
+    if (state.pointer.mode === "move" && state._selMoveOriginCell) {
+      const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      state._selMoveDelta = {
+        dx: Math.floor(gxgy.x) - state._selMoveOriginCell.x,
+        dy: Math.floor(gxgy.y) - state._selMoveOriginCell.y,
+      };
+      const selInfoEl = document.getElementById("selInfo");
+      if (selInfoEl) {
+        const { dx: ddx, dy: ddy } = state._selMoveDelta;
+        selInfoEl.textContent = `Move (${ddx > 0 ? "+" : ""}${ddx}, ${ddy > 0 ? "+" : ""}${ddy})`;
+      }
+      return;
+    }
+
+    if (state.pointer.mode === "select" && state._selStartCell) {
+      const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      const cx = Math.floor(gxgy.x);
+      const cy = Math.floor(gxgy.y);
+      const x1 = Math.min(state._selStartCell.x, cx);
+      const y1 = Math.min(state._selStartCell.y, cy);
+      const x2 = Math.max(state._selStartCell.x, cx) + 1;
+      const y2 = Math.max(state._selStartCell.y, cy) + 1;
+      state.selection = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+      const selInfoEl = document.getElementById("selInfo");
+      if (selInfoEl) selInfoEl.textContent = `${state.selection.w} × ${state.selection.h}`;
+    }
+
     if (state.pointer.mode === "paint") {
       const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
       setCell(gxgy.x, gxgy.y, state.pointer.paintValue === 1);
@@ -2074,8 +3226,28 @@
     if (canvas.hasPointerCapture(ev.pointerId)) {
       canvas.releasePointerCapture(ev.pointerId);
     }
+
+    if (state.pointer.mode === "move" && state._selMoving && state._selCells) {
+      // Commit: place lifted cells at new position
+      const sel = state.selection;
+      const { dx, dy } = state._selMoveDelta;
+      const newX = sel.x + dx, newY = sel.y + dy;
+      for (const [ox, oy] of state._selCells) {
+        setCell(newX + ox, newY + oy, true);
+      }
+      state.selection = { x: newX, y: newY, w: sel.w, h: sel.h };
+      state._selCells = null;
+      state._selMoving = false;
+      state._selMoveDelta = { dx: 0, dy: 0 };
+      const selInfoEl = document.getElementById("selInfo");
+      if (selInfoEl) selInfoEl.textContent = `${sel.w} × ${sel.h}`;
+    }
+
     state.pointer.down = false;
     state.pointer.mode = null;
+    // Restore mode cursor after drag
+    if (state.canvasMode === "move") canvas.style.cursor = "grab";
+
   }
 
   function handleWheel(ev) {
@@ -2202,40 +3374,63 @@
     }
   }
 
-  function buildPalette() {
-    for (const prefab of PREFABS) {
-      const card = document.createElement("article");
-      card.className = "palette-card";
-      card.draggable = true;
-      card.dataset.prefabId = prefab.id;
-      card.innerHTML = `
+  function makePaletteCard(prefab, isCustom) {
+    const card = document.createElement("article");
+    card.className = "palette-card";
+    card.draggable = true;
+    card.dataset.prefabId = prefab.id;
+    card.innerHTML = `
+      <div class="palette-card-head">
         <strong>${prefab.name}</strong>
-        <div class="meta"><span>${prefab.category}</span><span>${prefab.type}</span></div>
-        <small>${prefab.desc}</small>
-      `;
-
-      card.addEventListener("click", () => {
-        state.selectedPrefabId = prefab.id;
-        refreshPaletteSelection();
-        renderInspector(prefab);
+        ${isCustom ? `<button class="palette-del-btn" title="Delete prefab">×</button>` : ""}
+      </div>
+      <div class="meta"><span>${prefab.category}</span><span>${prefab.type}</span></div>
+      <small>${prefab.desc}</small>
+    `;
+    if (isCustom) {
+      card.querySelector(".palette-del-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteCustomPrefab(prefab.id);
       });
-
-      card.addEventListener("dragstart", (ev) => {
-        state.draggingPrefabId = prefab.id;
-        ev.dataTransfer.setData("text/plain", prefab.id);
-        ev.dataTransfer.effectAllowed = "copy";
-      });
-
-      card.addEventListener("dragend", () => {
-        state.draggingPrefabId = null;
-      });
-
-      paletteList.appendChild(card);
     }
+    card.addEventListener("click", () => {
+      state.selectedPrefabId = prefab.id;
+      refreshPaletteSelection();
+      renderInspector(prefab);
+    });
+    card.addEventListener("dragstart", (ev) => {
+      state.draggingPrefabId = prefab.id;
+      ev.dataTransfer.setData("text/plain", prefab.id);
+      ev.dataTransfer.effectAllowed = "copy";
+    });
+    card.addEventListener("dragend", () => { state.draggingPrefabId = null; });
+    return card;
+  }
 
-    state.selectedPrefabId = PREFABS[0].id;
+  function buildPalette() {
+    paletteList.innerHTML = "";
+    const customs = lsLoad(LS_CUSTOM_PREFABS);
+    if (customs.length > 0) {
+      const hdr = document.createElement("div");
+      hdr.className = "palette-section-hdr";
+      hdr.textContent = "Custom";
+      paletteList.appendChild(hdr);
+      for (const p of [...customs].reverse()) {
+        paletteList.appendChild(makePaletteCard(p, true));
+      }
+      const hdr2 = document.createElement("div");
+      hdr2.className = "palette-section-hdr";
+      hdr2.textContent = "Built-in";
+      paletteList.appendChild(hdr2);
+    }
+    for (const prefab of PREFABS) {
+      paletteList.appendChild(makePaletteCard(prefab, false));
+    }
+    const firstId = customs.length > 0 ? customs[customs.length - 1].id : PREFABS[0].id;
+    const firstPrefab = getPrefabById(firstId) || PREFABS[0];
+    state.selectedPrefabId = firstPrefab.id;
     refreshPaletteSelection();
-    renderInspector(PREFABS[0]);
+    renderInspector(firstPrefab);
   }
 
   function refreshPaletteSelection() {
@@ -2248,17 +3443,23 @@
   function renderInspector(prefab) {
     const width = Math.max(...prefab.cells.map((c) => c[0])) + 1;
     const height = Math.max(...prefab.cells.map((c) => c[1])) + 1;
+    const periodLine = prefab.period ? `<p><strong>Nominal period:</strong> ${prefab.period}</p>` : "";
+    const tipLine = prefab.tip ? `<p><strong>Tip:</strong> ${prefab.tip}</p>` : "";
     inspectorBody.innerHTML = `
       <h3>${prefab.name}</h3>
       <p>${prefab.desc}</p>
       <p><strong>Type:</strong> ${prefab.type}</p>
-      <p><strong>Footprint:</strong> ${width} x ${height}</p>
-      <p><strong>Nominal period:</strong> ${prefab.period}</p>
-      <p><strong>Tip:</strong> ${prefab.tip}</p>
+      <p><strong>Footprint:</strong> ${width} × ${height}</p>
+      ${periodLine}${tipLine}
     `;
   }
 
   function setupControls() {
+    // Mode toolbar
+    document.querySelectorAll(".mode-btn").forEach((btn) => {
+      btn.addEventListener("click", () => setCanvasMode(btn.dataset.mode));
+    });
+
     document.getElementById("playBtn").addEventListener("click", () => {
       syncPlayUI(!state.running, false);
     });
@@ -2399,7 +3600,52 @@
         return;
       }
 
-      if (ev.key.toLowerCase() === "n") {
+      // Selection edit shortcuts
+      const hasSel = state.selection && state.selection.w > 0 && state.selection.h > 0;
+      const mod = ev.ctrlKey || ev.metaKey;
+
+      function selCells() {
+        if (state._selMoving && state._selCells) return [...state._selCells];
+        const sel = state.selection;
+        const out = [];
+        for (const k of activeAlive()) {
+          const [col, row] = parseKey(k);
+          if (col >= sel.x && col < sel.x + sel.w && row >= sel.y && row < sel.y + sel.h)
+            out.push([col - sel.x, row - sel.y]);
+        }
+        return out;
+      }
+
+      function deleteSelCells() {
+        if (state._selMoving && state._selCells) {
+          state._selCells = null; state._selMoving = false; state._selMoveDelta = { dx: 0, dy: 0 };
+        } else {
+          const sel = state.selection;
+          const alive = activeAlive();
+          for (let c = sel.x; c < sel.x + sel.w; c++)
+            for (let r = sel.y; r < sel.y + sel.h; r++) alive.delete(key(c, r));
+        }
+      }
+
+      if ((ev.key === "Delete" || ev.key === "Backspace") && hasSel) {
+        deleteSelCells();
+        state.selection = null;
+        ev.preventDefault();
+      } else if (mod && ev.key === "c" && hasSel) {
+        state._clipboard = selCells();
+        ev.preventDefault();
+      } else if (mod && ev.key === "x" && hasSel) {
+        state._clipboard = selCells();
+        deleteSelCells();
+        state.selection = null;
+        ev.preventDefault();
+      } else if (mod && ev.key === "v" && state._clipboard && state._clipboard.length > 0) {
+        const hc = state.hoverCell;
+        const ox = hc ? hc.x : Math.round(state.cameraX);
+        const oy = hc ? hc.y : Math.round(state.cameraY);
+        for (const [dx, dy] of state._clipboard) setCell(ox + dx, oy + dy, true);
+        ev.preventDefault();
+      } else if (ev.key.toLowerCase() === "n") {
         syncPlayUI(false, false);
         tickForward();
         if (state.mode === "sphere" && sphereThree) renderSphere();
@@ -2447,9 +3693,27 @@
         modeSelect.value = "cylinder";
         modeSelect.dispatchEvent(new Event("change"));
       } else if (ev.key.toLowerCase() === "p") {
-        const id = state.selectedPrefabId;
-        if (id && state.hoverCell) {
-          placePrefab(id, state.hoverCell.x, state.hoverCell.y);
+        setCanvasMode("paint");
+      } else if (ev.key.toLowerCase() === "m") {
+        setCanvasMode(state.canvasMode === "move" ? "paint" : "move");
+      } else if (ev.key.toLowerCase() === "s") {
+        setCanvasMode(state.canvasMode === "select" ? "paint" : "select");
+        if (state.canvasMode !== "select") state.selection = null;
+      } else if (ev.key.toLowerCase() === "v" && !mod) {
+        setCanvasMode(state.canvasMode === "force" ? "paint" : "force");
+      } else if (ev.key === "Escape") {
+        setCanvasMode("paint");
+        state.selection = null;
+        ev.preventDefault();
+      } else if (ev.key.toLowerCase() === "x" && !mod) {
+        if (state.cellTypesEnabled) {
+          state.paintType = state.paintType === 0 ? 1 : 0;
+          const btnA = document.getElementById("typeABtn");
+          const btnB = document.getElementById("typeBBtn");
+          if (btnA && btnB) {
+            btnA.classList.toggle("rl-type-active", state.paintType === 0);
+            btnB.classList.toggle("rl-type-active", state.paintType === 1);
+          }
         }
       }
     });
@@ -2553,11 +3817,1366 @@
     tlTrack.addEventListener("pointerup", () => { scrubbing = false; });
   }
 
+  function setupPhysicsLab() {
+    const driftXEl = document.getElementById("driftX");
+    const driftYEl = document.getElementById("driftY");
+    const driftXOut = document.getElementById("driftXOut");
+    const driftYOut = document.getElementById("driftYOut");
+    const colorByAgeEl = document.getElementById("colorByAge");
+
+    driftXEl.addEventListener("input", () => {
+      state.driftX = Number(driftXEl.value);
+      driftXOut.textContent = Number(driftXEl.value).toFixed(2);
+    });
+
+    driftYEl.addEventListener("input", () => {
+      state.driftY = Number(driftYEl.value);
+      driftYOut.textContent = Number(driftYEl.value).toFixed(2);
+    });
+
+    colorByAgeEl.addEventListener("change", () => {
+      state.colorByAge = colorByAgeEl.checked;
+    });
+
+    const showTrailsEl = document.getElementById("showTrails");
+    const trailDecayEl = document.getElementById("trailDecay");
+    const trailDecayOut = document.getElementById("trailDecayOut");
+
+    showTrailsEl.addEventListener("change", () => {
+      state.showTrails = showTrailsEl.checked;
+      if (!state.showTrails) trailMap.clear();
+    });
+
+    trailDecayEl.addEventListener("input", () => {
+      state.trailDecay = Number(trailDecayEl.value);
+      trailDecayOut.textContent = trailDecayEl.value;
+    });
+
+    document.getElementById("repulseEnabled").addEventListener("change", (e) => {
+      state.repulseEnabled = e.target.checked;
+    });
+    document.getElementById("repulseAge").addEventListener("input", (e) => {
+      state.repulseAge = Number(e.target.value);
+      document.getElementById("repulseAgeOut").textContent = e.target.value;
+    });
+    document.getElementById("repulseStrength").addEventListener("input", (e) => {
+      state.repulseStrength = Number(e.target.value);
+      document.getElementById("repulseStrengthOut").textContent = e.target.value;
+    });
+
+    document.getElementById("contigRepulseEnabled").addEventListener("change", (e) => {
+      state.contigRepulseEnabled = e.target.checked;
+      if (!e.target.checked) _contigAccum.clear();
+    });
+    document.getElementById("contigRepulseRadius").addEventListener("input", (e) => {
+      state.contigRepulseRadius = Number(e.target.value);
+      document.getElementById("contigRepulseRadiusOut").textContent = e.target.value;
+    });
+    document.getElementById("contigRepulseForce").addEventListener("input", (e) => {
+      state.contigRepulseForce = Number(e.target.value);
+      document.getElementById("contigRepulseForceOut").textContent = Number(e.target.value).toFixed(1);
+    });
+    document.getElementById("contigMinSize").addEventListener("input", (e) => {
+      state.contigMinSize = Number(e.target.value);
+      document.getElementById("contigMinSizeOut").textContent = e.target.value;
+    });
+  }
+
+  function setupRuleLab() {
+    function syncActivePreset() {
+      const current = ruleInputEl.value.toUpperCase().replace(/\s/g, "");
+      document.querySelectorAll(".rl-preset").forEach((btn) => {
+        btn.classList.toggle("rl-active", btn.dataset.rule.toUpperCase() === current);
+      });
+    }
+    _syncActivePreset = syncActivePreset;
+
+    document.getElementById("ruleApply").addEventListener("click", () => {
+      if (setRule(ruleInputEl.value)) {
+        syncActivePreset();
+      } else {
+        ruleInputEl.style.borderColor = "var(--danger)";
+        setTimeout(() => { ruleInputEl.style.borderColor = ""; }, 600);
+      }
+    });
+
+    ruleInputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("ruleApply").click();
+    });
+
+    document.querySelectorAll(".rl-preset").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        ruleInputEl.value = btn.dataset.rule;
+        setRule(btn.dataset.rule);
+        syncActivePreset();
+      });
+    });
+
+    kernelShapeEl.addEventListener("change", () => {
+      state.kernelShape = kernelShapeEl.value;
+      _kernelOffsets = null;
+      _kernelCacheKey = null;
+    });
+
+    kernelRadiusEl.addEventListener("input", () => {
+      state.kernelRadius = Number(kernelRadiusEl.value);
+      kernelRadiusOut.textContent = kernelRadiusEl.value;
+      _kernelOffsets = null;
+      _kernelCacheKey = null;
+    });
+
+    const ruleInput2El = document.getElementById("ruleInput2");
+    _ruleInput2El = ruleInput2El;
+    const ruleCyclePeriodEl = document.getElementById("ruleCyclePeriod");
+    const ruleCyclePeriodOut = document.getElementById("ruleCyclePeriodOut");
+    const ruleCycleActiveEl = document.getElementById("ruleCycleActive");
+
+    ruleInput2El.addEventListener("change", () => {
+      const r = parseRule(ruleInput2El.value);
+      if (r) { state.ruleB2 = r.B; state.ruleS2 = r.S; }
+      else {
+        ruleInput2El.style.borderColor = "var(--danger)";
+        setTimeout(() => { ruleInput2El.style.borderColor = ""; }, 600);
+      }
+    });
+
+    ruleCyclePeriodEl.addEventListener("input", () => {
+      state.ruleCyclePeriod = Number(ruleCyclePeriodEl.value);
+      ruleCyclePeriodOut.textContent = ruleCyclePeriodEl.value;
+    });
+
+    ruleCycleActiveEl.addEventListener("change", () => {
+      state.ruleCycleActive = ruleCycleActiveEl.checked;
+    });
+
+    syncActivePreset();
+  }
+
+  function setupWaveLab() {
+    const leniaModeEl = document.getElementById("leniaModeChk");
+    const leniaMuEl = document.getElementById("leniaMu");
+    const leniaMuOut = document.getElementById("leniaMuOut");
+    const leniaSigmaEl = document.getElementById("leniaSigma");
+    const leniaSigmaOut = document.getElementById("leniaSigmaOut");
+    const leniaDtEl = document.getElementById("leniaDt");
+    const leniaDtOut = document.getElementById("leniaDtOut");
+    if (!leniaModeEl) return;
+
+    leniaModeEl.addEventListener("change", (e) => {
+      state.leniaMode = e.target.checked;
+      if (state.leniaMode) valueMap.clear();
+    });
+    leniaMuEl.addEventListener("input", () => {
+      state.leniaMu = Number(leniaMuEl.value);
+      leniaMuOut.textContent = leniaMuEl.value;
+    });
+    leniaSigmaEl.addEventListener("input", () => {
+      state.leniaSigma = Number(leniaSigmaEl.value);
+      leniaSigmaOut.textContent = leniaSigmaEl.value;
+    });
+    leniaDtEl.addEventListener("input", () => {
+      state.leniaTimeStep = Number(leniaDtEl.value);
+      leniaDtOut.textContent = leniaDtEl.value;
+    });
+  }
+
+  function setupTypeLab() {
+    const cellTypesEl = document.getElementById("cellTypesChk");
+    const typeABtn = document.getElementById("typeABtn");
+    const typeBBtn = document.getElementById("typeBBtn");
+    const typeARuleEl = document.getElementById("typeARule");
+    const typeBRuleEl = document.getElementById("typeBRule");
+    if (!cellTypesEl) return;
+
+    cellTypesEl.addEventListener("change", (e) => {
+      state.cellTypesEnabled = e.target.checked;
+    });
+    typeABtn.addEventListener("click", () => {
+      state.paintType = 0;
+      typeABtn.classList.add("rl-type-active");
+      typeBBtn.classList.remove("rl-type-active");
+    });
+    typeBBtn.addEventListener("click", () => {
+      state.paintType = 1;
+      typeBBtn.classList.add("rl-type-active");
+      typeABtn.classList.remove("rl-type-active");
+    });
+    typeARuleEl.addEventListener("change", () => {
+      const r = parseRule(typeARuleEl.value);
+      if (r) { state.typeARuleB = r.B; state.typeARuleS = r.S; }
+    });
+    typeBRuleEl.addEventListener("change", () => {
+      const r = parseRule(typeBRuleEl.value);
+      if (r) { state.typeBRuleB = r.B; state.typeBRuleS = r.S; }
+    });
+  }
+
+  // ── Library (save / load configs and boards) ──────────────────────────────
+
+  const LS_CONFIGS = "aa_configs";
+  const LS_BOARDS  = "aa_boards";
+
+  function lsLoad(key) {
+    try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; }
+  }
+  function lsSave(key, data) {
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* quota */ }
+  }
+
+  function encodeRLE() {
+    const alive = activeAlive();
+    if (alive.size === 0) return "";
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const k of alive) {
+      const [x, y] = parseKey(k);
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    let body = "";
+    for (let row = minY; row <= maxY; row++) {
+      const runs = [];
+      let run = 0, cur = false;
+      for (let col = minX; col <= maxX; col++) {
+        const c = alive.has(key(col, row));
+        if (c === cur) { run++; }
+        else { if (run > 0) runs.push({ n: run, a: cur }); cur = c; run = 1; }
+      }
+      if (run > 0) runs.push({ n: run, a: cur });
+      while (runs.length && !runs[runs.length - 1].a) runs.pop();
+      for (const r of runs) body += (r.n > 1 ? r.n : "") + (r.a ? "o" : "b");
+      if (row < maxY) body += "$";
+    }
+    body += "!";
+    let wrapped = "";
+    while (body.length > 70) { wrapped += body.slice(0, 70) + "\n"; body = body.slice(70); }
+    wrapped += body;
+    return `x = ${maxX - minX + 1}, y = ${maxY - minY + 1}, rule = ${ruleToString(state.ruleB, state.ruleS)}\n${wrapped}`;
+  }
+
+  function decodeRLE(text) {
+    const lines = text.split(/\r?\n/);
+    let headerLine = null;
+    const bodyLines = [];
+    for (const l of lines) {
+      if (l.startsWith("#") || l.trim() === "") continue;
+      if (headerLine === null) { headerLine = l; continue; }
+      bodyLines.push(l);
+    }
+    if (!headerLine) return null;
+    const xm = headerLine.match(/x\s*=\s*(\d+)/i);
+    const ym = headerLine.match(/y\s*=\s*(\d+)/i);
+    if (!xm || !ym) return null;
+    const body = bodyLines.join("").split("!")[0];
+    const cells = [];
+    let col = 0, row = 0, count = "";
+    for (const ch of body) {
+      if (ch >= "0" && ch <= "9") { count += ch; continue; }
+      const n = count ? parseInt(count) : 1;
+      count = "";
+      if (ch === "b") { col += n; }
+      else if (ch === "o") { for (let i = 0; i < n; i++) cells.push([col + i, row]); col += n; }
+      else if (ch === "$") { col = 0; row += n; }
+    }
+    return cells;
+  }
+
+  function detectPeriod(maxP = 512) {
+    const alive = activeAlive();
+    if (alive.size === 0) return { found: false, msg: "Board is empty." };
+    if (alive.size > 3000) return { found: false, msg: "Too many cells (> 3000) — detection skipped." };
+
+    const savedKeys = [...alive];
+    const savedGen = state.generation;
+    const savedAgeMap = new Map(cellAgeMap);
+
+    let minX0 = Infinity, minY0 = Infinity;
+    for (const k of alive) {
+      const [x, y] = parseKey(k);
+      minX0 = Math.min(minX0, x); minY0 = Math.min(minY0, y);
+    }
+    const fp0 = savedKeys.map((k) => { const [x, y] = parseKey(k); return `${x - minX0},${y - minY0}`; }).sort().join("|");
+    const origSize = alive.size;
+
+    let foundPeriod = null, displacement = null;
+
+    for (let p = 1; p <= maxP; p++) {
+      stepLife();
+      const cur = activeAlive();
+      if (cur.size === origSize) {
+        let minX = Infinity, minY = Infinity;
+        for (const k of cur) { const [x, y] = parseKey(k); minX = Math.min(minX, x); minY = Math.min(minY, y); }
+        const fp = [...cur].map((k) => { const [x, y] = parseKey(k); return `${x - minX},${y - minY}`; }).sort().join("|");
+        if (fp === fp0) { foundPeriod = p; displacement = { dx: minX - minX0, dy: minY - minY0 }; break; }
+      }
+    }
+
+    if (state.sharedState) state.alive = new Set(savedKeys);
+    else state.modeAlive[state.mode] = new Set(savedKeys);
+    state.generation = savedGen;
+    cellAgeMap = new Map(savedAgeMap);
+
+    if (foundPeriod === null) return { found: false, msg: `No period ≤ ${maxP} gens found.` };
+    const { dx, dy } = displacement;
+    if (dx === 0 && dy === 0) return { found: true, msg: `Period: ${foundPeriod}` };
+    const sign = (n) => (n > 0 ? "+" : "") + n;
+    return { found: true, msg: `Period: ${foundPeriod}, shift (${sign(dx)}, ${sign(dy)})` };
+  }
+
+  function serializeConfig() {
+    return {
+      rule1: ruleToString(state.ruleB, state.ruleS),
+      rule2: ruleToString(state.ruleB2, state.ruleS2),
+      kernelShape: state.kernelShape,
+      kernelRadius: state.kernelRadius,
+      driftX: state.driftX,
+      driftY: state.driftY,
+      colorByAge: state.colorByAge,
+      showTrails: state.showTrails,
+      trailDecay: state.trailDecay,
+      repulseEnabled: state.repulseEnabled,
+      repulseAge: state.repulseAge,
+      repulseStrength: state.repulseStrength,
+      contigRepulseEnabled: state.contigRepulseEnabled,
+      contigRepulseRadius: state.contigRepulseRadius,
+      contigRepulseForce: state.contigRepulseForce,
+      contigMinSize: state.contigMinSize,
+      ruleCycleActive: state.ruleCycleActive,
+      ruleCyclePeriod: state.ruleCyclePeriod,
+      leniaMode: state.leniaMode,
+      leniaMu: state.leniaMu,
+      leniaSigma: state.leniaSigma,
+      leniaTimeStep: state.leniaTimeStep,
+      cellTypesEnabled: state.cellTypesEnabled,
+      typeAColor: state.typeAColor,
+      typeBColor: state.typeBColor,
+      typeARuleB: [...state.typeARuleB],
+      typeARuleS: [...state.typeARuleS],
+      typeBRuleB: [...state.typeBRuleB],
+      typeBRuleS: [...state.typeBRuleS],
+      heatmapMode: state.heatmapMode,
+      heatmapOverlay: state.heatmapOverlay,
+      entrenchEnabled: state.entrenchEnabled,
+      entrenchThreshold: state.entrenchThreshold,
+      adaptRulesEnabled: state.adaptRulesEnabled,
+      adaptTarget: state.adaptTarget,
+      adaptRate: state.adaptRate,
+      stepsPerSecond: state.stepsPerSecond,
+      zoom: state.zoom,
+      showGrid: state.showGrid,
+      rulesZoneEnabled: state.rulesZoneEnabled,
+      rulesZoneAxis: state.rulesZoneAxis,
+      rulesZoneOffset: state.rulesZoneOffset,
+      rulesZoneRuleB2: [...state.rulesZoneRuleB2],
+      rulesZoneRuleS2: [...state.rulesZoneRuleS2],
+      forceFields: state.forceFields.map((ff) => ({ ...ff })),
+      densityFeedback: state.densityFeedback,
+      densityTarget: state.densityTarget,
+      densityStrength: state.densityStrength,
+    };
+  }
+
+  function applyConfig(cfg) {
+    if (cfg.rule1) { const r = parseRule(cfg.rule1); if (r) { state.ruleB = r.B; state.ruleS = r.S; } }
+    if (cfg.rule2) { const r = parseRule(cfg.rule2); if (r) { state.ruleB2 = r.B; state.ruleS2 = r.S; } }
+    if (cfg.kernelShape  !== undefined) state.kernelShape  = cfg.kernelShape;
+    if (cfg.kernelRadius !== undefined) state.kernelRadius = cfg.kernelRadius;
+    _kernelOffsets = null; _kernelCacheKey = null;
+    if (cfg.driftX               !== undefined) state.driftX               = cfg.driftX;
+    if (cfg.driftY               !== undefined) state.driftY               = cfg.driftY;
+    if (cfg.colorByAge           !== undefined) state.colorByAge           = cfg.colorByAge;
+    if (cfg.showTrails           !== undefined) state.showTrails           = cfg.showTrails;
+    if (cfg.trailDecay           !== undefined) state.trailDecay           = cfg.trailDecay;
+    if (cfg.repulseEnabled       !== undefined) state.repulseEnabled       = cfg.repulseEnabled;
+    if (cfg.repulseAge           !== undefined) state.repulseAge           = cfg.repulseAge;
+    if (cfg.repulseStrength      !== undefined) state.repulseStrength      = cfg.repulseStrength;
+    if (cfg.contigRepulseEnabled !== undefined) state.contigRepulseEnabled = cfg.contigRepulseEnabled;
+    if (cfg.contigRepulseRadius  !== undefined) state.contigRepulseRadius  = cfg.contigRepulseRadius;
+    if (cfg.contigRepulseForce   !== undefined) state.contigRepulseForce   = cfg.contigRepulseForce;
+    if (cfg.contigMinSize        !== undefined) state.contigMinSize        = cfg.contigMinSize;
+    if (cfg.ruleCycleActive      !== undefined) state.ruleCycleActive      = cfg.ruleCycleActive;
+    if (cfg.ruleCyclePeriod      !== undefined) state.ruleCyclePeriod      = cfg.ruleCyclePeriod;
+    if (cfg.leniaMode            !== undefined) state.leniaMode            = cfg.leniaMode;
+    if (cfg.leniaMu              !== undefined) state.leniaMu              = cfg.leniaMu;
+    if (cfg.leniaSigma           !== undefined) state.leniaSigma           = cfg.leniaSigma;
+    if (cfg.leniaTimeStep        !== undefined) state.leniaTimeStep        = cfg.leniaTimeStep;
+    if (cfg.cellTypesEnabled     !== undefined) state.cellTypesEnabled     = cfg.cellTypesEnabled;
+    if (cfg.typeAColor           !== undefined) state.typeAColor           = cfg.typeAColor;
+    if (cfg.typeBColor           !== undefined) state.typeBColor           = cfg.typeBColor;
+    if (cfg.typeARuleB) state.typeARuleB = new Set(cfg.typeARuleB);
+    if (cfg.typeARuleS) state.typeARuleS = new Set(cfg.typeARuleS);
+    if (cfg.typeBRuleB) state.typeBRuleB = new Set(cfg.typeBRuleB);
+    if (cfg.typeBRuleS) state.typeBRuleS = new Set(cfg.typeBRuleS);
+    if (cfg.heatmapMode      !== undefined) state.heatmapMode      = cfg.heatmapMode;
+    if (cfg.heatmapOverlay   !== undefined) state.heatmapOverlay   = cfg.heatmapOverlay;
+    if (cfg.entrenchEnabled  !== undefined) state.entrenchEnabled  = cfg.entrenchEnabled;
+    if (cfg.entrenchThreshold!== undefined) state.entrenchThreshold= cfg.entrenchThreshold;
+    if (cfg.adaptRulesEnabled!== undefined) state.adaptRulesEnabled= cfg.adaptRulesEnabled;
+    if (cfg.adaptTarget      !== undefined) state.adaptTarget      = cfg.adaptTarget;
+    if (cfg.adaptRate        !== undefined) state.adaptRate        = cfg.adaptRate;
+    if (cfg.stepsPerSecond   !== undefined) state.stepsPerSecond   = cfg.stepsPerSecond;
+    if (cfg.zoom             !== undefined) state.zoom             = cfg.zoom;
+    if (cfg.showGrid             !== undefined) state.showGrid             = cfg.showGrid;
+    if (cfg.rulesZoneEnabled     !== undefined) state.rulesZoneEnabled     = cfg.rulesZoneEnabled;
+    if (cfg.rulesZoneAxis        !== undefined) state.rulesZoneAxis        = cfg.rulesZoneAxis;
+    if (cfg.rulesZoneOffset      !== undefined) state.rulesZoneOffset      = cfg.rulesZoneOffset;
+    if (cfg.rulesZoneRuleB2) state.rulesZoneRuleB2 = new Set(cfg.rulesZoneRuleB2);
+    if (cfg.rulesZoneRuleS2) state.rulesZoneRuleS2 = new Set(cfg.rulesZoneRuleS2);
+    if (cfg.forceFields          !== undefined) state.forceFields          = cfg.forceFields.map((ff) => ({ ...ff }));
+    if (cfg.densityFeedback      !== undefined) state.densityFeedback      = cfg.densityFeedback;
+    if (cfg.densityTarget        !== undefined) state.densityTarget        = cfg.densityTarget;
+    if (cfg.densityStrength      !== undefined) state.densityStrength      = cfg.densityStrength;
+    syncDOMFromState();
+  }
+
+  function syncDOMFromState() {
+    const el  = (id) => document.getElementById(id);
+    const sv  = (id, val) => { const e = el(id); if (e) e.value = String(val); };
+    const sc  = (id, val) => { const e = el(id); if (e) e.checked = !!val; };
+    const st  = (id, val) => { const e = el(id); if (e) e.textContent = String(val); };
+
+    // Rule Lab
+    sv("ruleInput", ruleToString(state.ruleB, state.ruleS));
+    if (_ruleInput2El) _ruleInput2El.value = ruleToString(state.ruleB2, state.ruleS2);
+    sv("kernelShape", state.kernelShape);
+    sv("kernelRadius", state.kernelRadius);
+    st("kernelRadiusOut", state.kernelRadius);
+    sc("ruleCycleActive", state.ruleCycleActive);
+    sv("ruleCyclePeriod", state.ruleCyclePeriod);
+    st("ruleCyclePeriodOut", state.ruleCyclePeriod);
+    _syncActivePreset();
+
+    // Physics Lab
+    sv("driftX", state.driftX);
+    st("driftXOut", state.driftX.toFixed(2));
+    sv("driftY", state.driftY);
+    st("driftYOut", state.driftY.toFixed(2));
+    sc("colorByAge",           state.colorByAge);
+    sc("showTrails",           state.showTrails);
+    sv("trailDecay",           state.trailDecay);
+    st("trailDecayOut",        state.trailDecay.toFixed(2));
+    sc("repulseEnabled",       state.repulseEnabled);
+    sv("repulseAge",           state.repulseAge);
+    st("repulseAgeOut",        state.repulseAge);
+    sv("repulseStrength",      state.repulseStrength);
+    st("repulseStrengthOut",   state.repulseStrength);
+    sc("contigRepulseEnabled", state.contigRepulseEnabled);
+    sv("contigRepulseRadius",  state.contigRepulseRadius);
+    st("contigRepulseRadiusOut",state.contigRepulseRadius);
+    sv("contigRepulseForce",   state.contigRepulseForce);
+    st("contigRepulseForceOut",state.contigRepulseForce.toFixed(1));
+    sv("contigMinSize",        state.contigMinSize);
+    st("contigMinSizeOut",     state.contigMinSize);
+
+    // Wave Lab
+    sc("leniaModeChk",  state.leniaMode);
+    sv("leniaMu",       state.leniaMu);
+    st("leniaMuOut",    String(state.leniaMu));
+    sv("leniaSigma",    state.leniaSigma);
+    st("leniaSigmaOut", String(state.leniaSigma));
+    sv("leniaDt",       state.leniaTimeStep);
+    st("leniaDtOut",    state.leniaTimeStep.toFixed(2));
+
+    // Cell Types
+    sc("cellTypesChk", state.cellTypesEnabled);
+    sv("typeARule", ruleToString(state.typeARuleB, state.typeARuleS));
+    sv("typeBRule", ruleToString(state.typeBRuleB, state.typeBRuleS));
+
+    // Evo / Heatmap Lab
+    sc("heatmapMode",      state.heatmapMode);
+    sc("heatmapOverlay",   state.heatmapOverlay);
+    sc("entrenchEnabled",  state.entrenchEnabled);
+    sv("entrenchThresh",   state.entrenchThreshold);
+    st("entrenchThreshOut",state.entrenchThreshold);
+    sc("adaptRulesEnabled",state.adaptRulesEnabled);
+    sv("adaptTarget",      state.adaptTarget);
+    st("adaptTargetOut",   state.adaptTarget);
+    sv("adaptRate",        state.adaptRate);
+    st("adaptRateOut",     state.adaptRate);
+
+    // Zone lab
+    sc("zoneEnabled",   state.rulesZoneEnabled);
+    sv("zoneAxis",      state.rulesZoneAxis);
+    sv("zoneOffset",    state.rulesZoneOffset);
+    st("zoneOffsetOut", state.rulesZoneOffset);
+    sv("zoneRule2",     ruleToString(state.rulesZoneRuleB2, state.rulesZoneRuleS2));
+
+    // Field lab
+    sc("densityFeedback",  state.densityFeedback);
+    sv("densityTarget",    state.densityTarget);
+    st("densityTargetOut", state.densityTarget);
+    sv("densityStrength",  state.densityStrength);
+    st("densityStrengthOut",state.densityStrength);
+    sv("forceRadius",      state.forcePaintRadius);
+    st("forceRadiusOut",   state.forcePaintRadius);
+    sv("forceStrength",    state.forcePaintStrength);
+    st("forceStrengthOut", state.forcePaintStrength);
+
+    // Timeline speed
+    const tierIdx = SPEED_TIERS.indexOf(state.stepsPerSecond);
+    if (tierIdx >= 0) {
+      sv("tlSpeed", tierIdx);
+      st("tlSpeedLabel", SPEED_LABELS[tierIdx]);
+    }
+  }
+
+  function serializeBoard() {
+    return {
+      cells: [...activeAlive()],
+      generation: state.generation,
+      types: state.cellTypesEnabled ? [...typeMap.entries()] : [],
+    };
+  }
+
+  function applyBoard(board) {
+    clearBoard();
+    const s = activeAlive();
+    for (const k of board.cells) s.add(k);
+    state.generation = board.generation || 0;
+    if (board.types && board.types.length > 0) {
+      for (const [k, t] of board.types) typeMap.set(k, t);
+    }
+    snapshotNow();
+    updateHud();
+  }
+
+  function setupZoneLab() {
+    const enableEl  = document.getElementById("zoneEnabled");
+    const axisEl    = document.getElementById("zoneAxis");
+    const offsetEl  = document.getElementById("zoneOffset");
+    const offsetOut = document.getElementById("zoneOffsetOut");
+    const rule2El   = document.getElementById("zoneRule2");
+    if (!enableEl) return;
+
+    enableEl.addEventListener("change", (e) => { state.rulesZoneEnabled = e.target.checked; });
+    axisEl.addEventListener("change", () => { state.rulesZoneAxis = axisEl.value; });
+    offsetEl.addEventListener("input", () => {
+      state.rulesZoneOffset = Number(offsetEl.value);
+      offsetOut.textContent = offsetEl.value;
+    });
+    rule2El.addEventListener("change", () => {
+      const r = parseRule(rule2El.value);
+      if (r) { state.rulesZoneRuleB2 = r.B; state.rulesZoneRuleS2 = r.S; }
+      else { rule2El.style.borderColor = "var(--danger)"; setTimeout(() => { rule2El.style.borderColor = ""; }, 600); }
+    });
+  }
+
+  function setupFieldLab() {
+    const toggleBtn  = document.getElementById("forcePaintToggle");
+    const attractBtn = document.getElementById("forceAttractBtn");
+    const repelBtn   = document.getElementById("forceRepelBtn");
+    const radiusEl   = document.getElementById("forceRadius");
+    const radiusOut  = document.getElementById("forceRadiusOut");
+    const strengthEl = document.getElementById("forceStrength");
+    const strengthOut= document.getElementById("forceStrengthOut");
+    const clearBtn   = document.getElementById("forceClearBtn");
+    const densityEl  = document.getElementById("densityFeedback");
+    const dTargetEl  = document.getElementById("densityTarget");
+    const dTargetOut = document.getElementById("densityTargetOut");
+    const dStrengthEl= document.getElementById("densityStrength");
+    const dStrengthOut=document.getElementById("densityStrengthOut");
+    if (!toggleBtn) return;
+
+    toggleBtn.addEventListener("click", () => {
+      setCanvasMode(state.canvasMode === "force" ? "paint" : "force");
+    });
+    attractBtn.addEventListener("click", () => {
+      state.forcePaintType = "attract";
+      attractBtn.classList.add("rl-type-active");
+      repelBtn.classList.remove("rl-type-active");
+    });
+    repelBtn.addEventListener("click", () => {
+      state.forcePaintType = "repel";
+      repelBtn.classList.add("rl-type-active");
+      attractBtn.classList.remove("rl-type-active");
+    });
+    radiusEl.addEventListener("input", () => {
+      state.forcePaintRadius = Number(radiusEl.value);
+      radiusOut.textContent = radiusEl.value;
+    });
+    strengthEl.addEventListener("input", () => {
+      state.forcePaintStrength = Number(strengthEl.value);
+      strengthOut.textContent = strengthEl.value;
+    });
+    clearBtn.addEventListener("click", () => { state.forceFields = []; });
+    densityEl.addEventListener("change", (e) => { state.densityFeedback = e.target.checked; });
+    dTargetEl.addEventListener("input", () => {
+      state.densityTarget = Number(dTargetEl.value);
+      dTargetOut.textContent = dTargetEl.value;
+    });
+    dStrengthEl.addEventListener("input", () => {
+      state.densityStrength = Number(dStrengthEl.value);
+      dStrengthOut.textContent = dStrengthEl.value;
+    });
+  }
+
+  function setupLibrary() {
+    const modal    = document.getElementById("libraryModal");
+    const closeBtn = document.getElementById("libClose");
+    const tabCfg   = document.getElementById("libTabCfg");
+    const tabBoard = document.getElementById("libTabBoard");
+    const tabRLE   = document.getElementById("libTabRLE");
+    const nameInput= document.getElementById("libNameInput");
+    const saveBtn  = document.getElementById("libSaveBtn");
+    const listEl   = document.getElementById("libList");
+    const libSaveRow = document.getElementById("libSaveRow");
+    const rlePanel = document.getElementById("libRLEPanel");
+    if (!modal) return;
+
+    let activeTab = "config";
+
+    function setTab(tab) {
+      activeTab = tab;
+      tabCfg.classList.toggle("lib-tab-active", tab === "config");
+      tabBoard.classList.toggle("lib-tab-active", tab === "board");
+      tabRLE.classList.toggle("lib-tab-active", tab === "rle");
+      const isRLE = tab === "rle";
+      if (libSaveRow) libSaveRow.style.display = isRLE ? "none" : "";
+      listEl.style.display = isRLE ? "none" : "";
+      rlePanel.style.display = isRLE ? "flex" : "none";
+      if (isRLE) refreshRLEPanel();
+      else renderList();
+    }
+
+    document.getElementById("libraryBtn").addEventListener("click", () => {
+      modal.classList.add("lib-open");
+      setTab(activeTab);
+    });
+    closeBtn.addEventListener("click", () => modal.classList.remove("lib-open"));
+    modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.remove("lib-open"); });
+
+    tabCfg.addEventListener("click", () => setTab("config"));
+    tabBoard.addEventListener("click", () => setTab("board"));
+    tabRLE.addEventListener("click", () => setTab("rle"));
+
+    function refreshRLEPanel() {
+      const ta = document.getElementById("rleExportArea");
+      if (ta) ta.value = encodeRLE() || "(board is empty)";
+    }
+
+    const rleImportArea = document.getElementById("rleImportArea");
+    const rleLoadBtn = document.getElementById("rleLoadBtn");
+    const rleCopyBtn = document.getElementById("rleCopyBtn");
+    const rleDownloadBtn = document.getElementById("rleDownloadBtn");
+
+    if (rleCopyBtn) {
+      rleCopyBtn.addEventListener("click", () => {
+        const ta = document.getElementById("rleExportArea");
+        if (!ta || !ta.value) return;
+        navigator.clipboard.writeText(ta.value).catch(() => {});
+        rleCopyBtn.textContent = "Copied!";
+        setTimeout(() => { rleCopyBtn.textContent = "Copy"; }, 1400);
+      });
+    }
+
+    if (rleDownloadBtn) {
+      rleDownloadBtn.addEventListener("click", () => {
+        const rle = encodeRLE();
+        if (!rle) return;
+        const blob = new Blob([rle], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "pattern.rle"; a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    if (rleLoadBtn && rleImportArea) {
+      rleLoadBtn.addEventListener("click", () => {
+        const cells = decodeRLE(rleImportArea.value);
+        if (!cells || cells.length === 0) {
+          rleLoadBtn.textContent = "Parse error";
+          setTimeout(() => { rleLoadBtn.textContent = "Load RLE"; }, 1400);
+          return;
+        }
+        clearBoard();
+        const cx = Math.round(state.cameraX), cy = Math.round(state.cameraY);
+        for (const [dx, dy] of cells) setCell(cx + dx, cy + dy, true);
+        snapshotNow(); updateHud();
+        modal.classList.remove("lib-open");
+      });
+    }
+
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") saveBtn.click(); });
+
+    saveBtn.addEventListener("click", () => {
+      const name = nameInput.value.trim();
+      if (!name) { nameInput.focus(); return; }
+      if (activeTab === "config") libSaveConfig(name);
+      else libSaveBoard(name);
+      renderList();
+    });
+
+    function renderList() {
+      const key   = activeTab === "config" ? LS_CONFIGS : LS_BOARDS;
+      const items = lsLoad(key);
+      listEl.innerHTML = "";
+      if (items.length === 0) {
+        const p = document.createElement("p");
+        p.className = "lib-empty";
+        p.textContent = activeTab === "config" ? "No saved configs." : "No saved boards.";
+        listEl.appendChild(p);
+        return;
+      }
+      for (const item of [...items].reverse()) {
+        const row = document.createElement("div");
+        row.className = "lib-row";
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "lib-name";
+        nameEl.textContent = item.name;
+        nameEl.title = item.name;
+
+        const dateEl = document.createElement("span");
+        dateEl.className = "lib-date";
+        dateEl.textContent = new Date(item.savedAt).toLocaleDateString();
+
+        const loadBtn = document.createElement("button");
+        loadBtn.className = "lib-btn";
+        loadBtn.textContent = "Load";
+        loadBtn.addEventListener("click", () => {
+          if (activeTab === "config") applyConfig(item.config);
+          else applyBoard(item.board);
+          nameInput.value = item.name;
+          modal.classList.remove("lib-open");
+        });
+
+        const renBtn = document.createElement("button");
+        renBtn.className = "lib-btn";
+        renBtn.textContent = "Ren";
+        renBtn.title = "Rename";
+        renBtn.addEventListener("click", () => {
+          const newName = prompt("Rename to:", item.name);
+          if (!newName || !newName.trim()) return;
+          const all = lsLoad(key);
+          const idx = all.findIndex((x) => x.id === item.id);
+          if (idx >= 0) { all[idx].name = newName.trim(); lsSave(key, all); }
+          renderList();
+        });
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "lib-btn lib-btn-del";
+        delBtn.textContent = "Del";
+        delBtn.addEventListener("click", () => {
+          const all = lsLoad(key);
+          lsSave(key, all.filter((x) => x.id !== item.id));
+          renderList();
+        });
+
+        row.appendChild(nameEl);
+        row.appendChild(dateEl);
+        row.appendChild(loadBtn);
+        row.appendChild(renBtn);
+        row.appendChild(delBtn);
+        listEl.appendChild(row);
+      }
+    }
+
+    function libSaveConfig(name) {
+      const all = lsLoad(LS_CONFIGS);
+      const idx = all.findIndex((c) => c.name === name);
+      const entry = { id: idx >= 0 ? all[idx].id : Date.now(), name, savedAt: Date.now(), config: serializeConfig() };
+      if (idx >= 0) all[idx] = entry; else all.push(entry);
+      lsSave(LS_CONFIGS, all);
+    }
+
+    function libSaveBoard(name) {
+      const all = lsLoad(LS_BOARDS);
+      const idx = all.findIndex((b) => b.name === name);
+      const entry = { id: idx >= 0 ? all[idx].id : Date.now(), name, savedAt: Date.now(), board: serializeBoard() };
+      if (idx >= 0) all[idx] = entry; else all.push(entry);
+      lsSave(LS_BOARDS, all);
+    }
+  }
+
+  function setupEvoLab() {
+    const heatmapModeEl = document.getElementById("heatmapMode");
+    const heatmapOverlayEl = document.getElementById("heatmapOverlay");
+    const clearHeatEl = document.getElementById("clearHeatBtn");
+    const entrenchEl = document.getElementById("entrenchEnabled");
+    const entrenchThreshEl = document.getElementById("entrenchThresh");
+    const entrenchThreshOut = document.getElementById("entrenchThreshOut");
+    const adaptEl = document.getElementById("adaptRulesEnabled");
+    const adaptTargetEl = document.getElementById("adaptTarget");
+    const adaptTargetOut = document.getElementById("adaptTargetOut");
+    const adaptRateEl = document.getElementById("adaptRate");
+    const adaptRateOut = document.getElementById("adaptRateOut");
+    if (!heatmapModeEl) return;
+
+    heatmapModeEl.addEventListener("change", (e) => {
+      state.heatmapMode = e.target.checked;
+      if (state.heatmapMode) state.heatmapOverlay = false;
+      if (heatmapOverlayEl) heatmapOverlayEl.checked = false;
+    });
+    heatmapOverlayEl.addEventListener("change", (e) => {
+      state.heatmapOverlay = e.target.checked;
+      if (state.heatmapOverlay) state.heatmapMode = false;
+      if (heatmapModeEl) heatmapModeEl.checked = false;
+    });
+    clearHeatEl.addEventListener("click", () => { heatMap.clear(); });
+
+    entrenchEl.addEventListener("change", (e) => { state.entrenchEnabled = e.target.checked; });
+    entrenchThreshEl.addEventListener("input", () => {
+      state.entrenchThreshold = Number(entrenchThreshEl.value);
+      entrenchThreshOut.textContent = entrenchThreshEl.value;
+    });
+
+    adaptEl.addEventListener("change", (e) => {
+      state.adaptRulesEnabled = e.target.checked;
+      state._adaptPrevPop = activeAlive().size;
+    });
+    adaptTargetEl.addEventListener("input", () => {
+      state.adaptTarget = Number(adaptTargetEl.value);
+      adaptTargetOut.textContent = adaptTargetEl.value;
+    });
+    adaptRateEl.addEventListener("input", () => {
+      state.adaptRate = Number(adaptRateEl.value);
+      adaptRateOut.textContent = adaptRateEl.value;
+    });
+  }
+
+  function setupCaptureLab() {
+    const selModeBtn = document.getElementById("selModeBtn");
+    const selInfoEl = document.getElementById("selInfo");
+    const captureNameInput = document.getElementById("captureNameInput");
+    const captureDescInput = document.getElementById("captureDescInput");
+    const captureSaveBtn = document.getElementById("captureSaveBtn");
+    const clearSelBtn = document.getElementById("clearSelBtn");
+    if (!selModeBtn) return;
+
+    selModeBtn.addEventListener("click", () => {
+      setCanvasMode(state.canvasMode === "select" ? "paint" : "select");
+      if (state.canvasMode !== "select") state.selection = null;
+    });
+
+    clearSelBtn.addEventListener("click", () => {
+      if (state._selMoving && state._selCells) {
+        const sel = state.selection;
+        for (const [ox, oy] of state._selCells) setCell(sel.x + ox, sel.y + oy, true);
+        state._selCells = null; state._selMoving = false; state._selMoveDelta = { dx: 0, dy: 0 };
+      }
+      state.selection = null;
+      selInfoEl.textContent = "";
+    });
+
+    captureSaveBtn.addEventListener("click", () => {
+      const name = captureNameInput.value.trim() || "Custom Pattern";
+      const desc = captureDescInput.value.trim();
+      const ok = captureSelection(name, desc);
+      if (ok) {
+        captureNameInput.value = "";
+        captureDescInput.value = "";
+        selInfoEl.textContent = "Saved!";
+        setTimeout(() => {
+          if (selInfoEl.textContent === "Saved!") selInfoEl.textContent = "";
+        }, 1800);
+      } else {
+        selInfoEl.textContent = "No cells in selection.";
+      }
+    });
+
+    captureNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") captureSaveBtn.click();
+    });
+  }
+
+  function setupAnalysisLab() {
+    const detectBtn  = document.getElementById("detectPeriodBtn");
+    const resultEl   = document.getElementById("periodResult");
+    const exportBtn  = document.getElementById("exportRLEBtn");
+    const importBtn  = document.getElementById("importRLEBtn");
+    const rleArea    = document.getElementById("rleAreaInline");
+    const rleLoadBtn = document.getElementById("rleLoadInlineBtn");
+    if (!detectBtn) return;
+
+    detectBtn.addEventListener("click", () => {
+      resultEl.textContent = "Analysing…";
+      setTimeout(() => {
+        const r = detectPeriod(512);
+        resultEl.textContent = r.msg;
+        resultEl.style.color = r.found ? "var(--accent)" : "var(--muted)";
+      }, 10);
+    });
+
+    if (exportBtn) {
+      exportBtn.addEventListener("click", () => {
+        const rle = encodeRLE();
+        if (!rle) { resultEl.textContent = "Board is empty."; return; }
+        const blob = new Blob([rle], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "pattern.rle"; a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    if (importBtn && rleArea && rleLoadBtn) {
+      importBtn.addEventListener("click", () => {
+        const hidden = rleArea.style.display === "none" || rleArea.style.display === "";
+        rleArea.style.display = hidden ? "block" : "none";
+        rleLoadBtn.style.display = hidden ? "block" : "none";
+      });
+      rleLoadBtn.addEventListener("click", () => {
+        const cells = decodeRLE(rleArea.value);
+        if (!cells || cells.length === 0) {
+          resultEl.textContent = "RLE parse error.";
+          resultEl.style.color = "var(--muted)";
+          return;
+        }
+        clearBoard();
+        const cx = Math.round(state.cameraX), cy = Math.round(state.cameraY);
+        for (const [dx, dy] of cells) setCell(cx + dx, cy + dy, true);
+        snapshotNow(); updateHud();
+        rleArea.style.display = "none";
+        rleLoadBtn.style.display = "none";
+        resultEl.textContent = `Loaded ${cells.length} cells.`;
+        resultEl.style.color = "var(--accent)";
+      });
+    }
+  }
+
+  // ─── Notebook ────────────────────────────────────────────────────────────────
+
+  function nbSave() {
+    try {
+      localStorage.setItem(LS_NOTEBOOK, JSON.stringify({
+        entries: state.notebook.entries,
+        _nextId: state.notebook._nextId,
+        _colorIdx: state.notebook._colorIdx,
+      }));
+    } catch (e) {}
+  }
+
+  function nbLoad() {
+    try {
+      const d = JSON.parse(localStorage.getItem(LS_NOTEBOOK) || "null");
+      if (!d) return;
+      state.notebook.entries = d.entries || [];
+      state.notebook._nextId = d._nextId || 1;
+      state.notebook._colorIdx = d._colorIdx || 0;
+    } catch (e) {}
+  }
+
+  function nbNextColor() {
+    return NB_COLORS[state.notebook._colorIdx++ % NB_COLORS.length];
+  }
+
+  function nbOpenPanel() {
+    state.notebook.open = true;
+    document.getElementById("notebookPanel")?.classList.add("nb-open");
+    nbRender();
+    nbUpdateMarkers();
+  }
+
+  function nbClosePanel() {
+    state.notebook.open = false;
+    document.getElementById("notebookPanel")?.classList.remove("nb-open");
+    nbCancelForm();
+    if (state.notebook.pinMode) {
+      state.notebook.pinMode = false;
+      canvas.style.cursor = "";
+      document.getElementById("notebookBtn")?.classList.remove("nb-pin-active");
+    }
+  }
+
+  function nbShowForm() {
+    document.getElementById("nbForm").style.display = "";
+    document.getElementById("nbTitleInput")?.focus();
+  }
+
+  function nbCancelForm() {
+    document.getElementById("nbForm").style.display = "none";
+    if (document.getElementById("nbTitleInput")) document.getElementById("nbTitleInput").value = "";
+    if (document.getElementById("nbBodyInput")) document.getElementById("nbBodyInput").value = "";
+    if (document.getElementById("nbPinPreview")) document.getElementById("nbPinPreview").style.display = "none";
+    if (document.getElementById("nbSceneChk")) document.getElementById("nbSceneChk").checked = false;
+    state.notebook._pendingPin = null;
+  }
+
+  function nbCreateEntry() {
+    const titleEl = document.getElementById("nbTitleInput");
+    const bodyEl = document.getElementById("nbBodyInput");
+    const snapChk = document.getElementById("nbSnapshotChk");
+    const sceneChk = document.getElementById("nbSceneChk");
+    const title = (titleEl?.value.trim()) || `Gen ${state.generation.toLocaleString()}`;
+    const body = bodyEl?.value.trim() || "";
+    const withSnap = snapChk?.checked ?? true;
+    const isScene = sceneChk?.checked ?? false;
+    const pin = state.notebook._pendingPin;
+
+    // Compute bounding-box offset so we can restore absolute positions later
+    let rleOffX = 0, rleOffY = 0;
+    const alive = activeAlive();
+    if (withSnap && alive.size > 0) {
+      let minX = Infinity, minY = Infinity;
+      for (const k of alive) {
+        const [cx, cy] = parseKey(k);
+        if (cx < minX) minX = cx;
+        if (cy < minY) minY = cy;
+      }
+      rleOffX = minX; rleOffY = minY;
+    }
+
+    const entry = {
+      id: state.notebook._nextId++,
+      type: "note",
+      title,
+      body,
+      gen: state.generation,
+      pop: alive.size,
+      rle: withSnap ? encodeRLE() : null,
+      rleOffX,
+      rleOffY,
+      cameraX: state.cameraX,
+      cameraY: state.cameraY,
+      zoom: state.zoom,
+      pinX: pin ? pin.x : null,
+      pinY: pin ? pin.y : null,
+      color: nbNextColor(),
+      isScene,
+      createdAt: Date.now(),
+    };
+
+    state.notebook.entries.push(entry);
+    state.notebook.entries.sort((a, b) => a.gen - b.gen);
+    nbSave();
+    nbCancelForm();
+    nbRender();
+    nbUpdateMarkers();
+    setOverlay(`Entry "${title}" saved.`);
+    setTimeout(() => setOverlay(""), 2000);
+  }
+
+  function nbDeleteEntry(id) {
+    state.notebook.entries = state.notebook.entries.filter(e => e.id !== id);
+    nbSave();
+    nbRender();
+    nbUpdateMarkers();
+  }
+
+  function nbToggleScene(id) {
+    const e = state.notebook.entries.find(e => e.id === id);
+    if (e) { e.isScene = !e.isScene; nbSave(); nbRender(); }
+  }
+
+  function nbRestoreEntry(id) {
+    const entry = state.notebook.entries.find(e => e.id === id);
+    if (!entry) return;
+
+    state.cameraX = entry.cameraX;
+    state.cameraY = entry.cameraY;
+    state.zoom = entry.zoom;
+
+    if (entry.rle && entry.rle.length > 10) {
+      const cells = decodeRLE(entry.rle);
+      clearBoard();
+      state.generation = entry.gen;
+      const ox = entry.rleOffX || 0, oy = entry.rleOffY || 0;
+      for (const [col, row] of cells) setCell(ox + col, oy + row, true);
+      snapshotNow();
+    }
+    updateHud();
+    setOverlay(`↺ Restored gen ${entry.gen}: "${entry.title}"`);
+    setTimeout(() => setOverlay(""), 2200);
+  }
+
+  function nbUpdateMarkers() {
+    const track = document.getElementById("tlTrack");
+    if (!track) return;
+    track.querySelectorAll(".nb-tl-marker").forEach(m => m.remove());
+    const frames = state.histFrames;
+    const maxGen = frames.length > 0 ? frames[frames.length - 1].gen : state.generation;
+    if (maxGen <= 0) return;
+    for (const entry of state.notebook.entries) {
+      if (entry.gen < 0) continue;
+      const pct = Math.min(100, (entry.gen / maxGen) * 100);
+      const m = document.createElement("div");
+      m.className = "nb-tl-marker";
+      m.style.left = pct + "%";
+      m.style.background = entry.color;
+      m.title = `Gen ${entry.gen}: ${entry.title}`;
+      m.addEventListener("click", ev => { ev.stopPropagation(); nbRestoreEntry(entry.id); });
+      track.appendChild(m);
+    }
+  }
+
+  function nbRender() {
+    const el = document.getElementById("nbEntries");
+    if (!el) return;
+    const entries = state.notebook.entries;
+    if (entries.length === 0) {
+      el.innerHTML = '<div class="nb-feed-empty">No entries yet. Press + Entry to document a discovery.</div>';
+      return;
+    }
+    const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");
+    el.innerHTML = entries.map((e, i) => {
+      const pinBadge = e.pinX !== null ? `<span class="nb-badge nb-pin-badge">📍${i+1}</span>` : "";
+      const sceneBadge = e.isScene ? `<span class="nb-badge nb-scene-badge">◆ scene</span>` : "";
+      const snapBadge = e.rle ? `<span class="nb-badge nb-snap-badge">📷</span>` : "";
+      const autoBadge = e.type === "auto" ? `<span class="nb-badge nb-auto-badge">auto</span>` : "";
+      const bodyHtml = e.body ? `<div class="nb-entry-body">${esc(e.body)}</div>` : "";
+      return `<div class="nb-entry" style="border-left-color:${e.color}" data-id="${e.id}">
+        <div class="nb-entry-meta">
+          <span class="nb-entry-gen">gen ${e.gen.toLocaleString()}</span>
+          <span class="nb-entry-pop">${e.pop.toLocaleString()} cells</span>
+          <span class="nb-entry-badges">${pinBadge}${sceneBadge}${snapBadge}${autoBadge}</span>
+        </div>
+        <div class="nb-entry-title">${esc(e.title)}</div>
+        ${bodyHtml}
+        <div class="nb-entry-actions">
+          <button class="nb-act nb-restore-act" data-id="${e.id}" title="Jump to this moment">↺ restore</button>
+          <button class="nb-act nb-scene-act" data-id="${e.id}" title="${e.isScene ? "Remove from scenes" : "Mark as scene"}">◆</button>
+          <button class="nb-act nb-del-act" data-id="${e.id}" title="Delete">✕</button>
+        </div>
+      </div>`;
+    }).join("");
+
+    el.querySelectorAll(".nb-restore-act").forEach(b =>
+      b.addEventListener("click", () => nbRestoreEntry(+b.dataset.id)));
+    el.querySelectorAll(".nb-scene-act").forEach(b =>
+      b.addEventListener("click", () => nbToggleScene(+b.dataset.id)));
+    el.querySelectorAll(".nb-del-act").forEach(b =>
+      b.addEventListener("click", () => nbDeleteEntry(+b.dataset.id)));
+  }
+
+  function nbCheckAuto() {
+    const nb = state.notebook;
+    const w = nb._watch;
+    const pop = activeAlive().size;
+    const gen = state.generation;
+    if (gen - w.lastAutoGen < 30) { w.lastPop = pop; return; }
+
+    let msg = null;
+    if (pop === 0 && w.lastPop > 0) {
+      msg = `Extinction — all ${w.lastPop.toLocaleString()} cells vanished.`;
+      w.peakPop = 0;
+    } else if (pop > w.peakPop + 200) {
+      w.peakPop = pop;
+      msg = `Population peak — ${pop.toLocaleString()} live cells.`;
+    } else if (pop > 0 && pop < 8 && w.lastPop >= 8) {
+      msg = `Near-extinction — only ${pop} cells remain.`;
+    } else if (pop === w.lastPop && pop > 0) {
+      if (w.stableSince === null) w.stableSince = gen;
+      else if ((gen - w.stableSince) >= 20 && !w.stableLogged) {
+        w.stableLogged = true;
+        msg = `Board stabilized — ${pop.toLocaleString()} cells locked since gen ${w.stableSince.toLocaleString()}.`;
+      }
+    } else {
+      w.stableSince = null;
+      w.stableLogged = false;
+    }
+
+    if (msg) {
+      w.lastAutoGen = gen;
+      nbPushAutoFeed(gen, pop, msg);
+    }
+    w.lastPop = pop;
+  }
+
+  function nbPushAutoFeed(gen, pop, msg) {
+    // Update live feed UI
+    const feed = document.getElementById("nbAutoFeed");
+    if (feed) {
+      const empty = feed.querySelector(".nb-feed-empty");
+      if (empty) empty.remove();
+      const item = document.createElement("div");
+      item.className = "nb-auto-item";
+      item.innerHTML = `<span class="nb-auto-gen">${gen.toLocaleString()}</span><span class="nb-auto-msg">${msg}</span>`;
+      feed.insertBefore(item, feed.firstChild);
+      while (feed.children.length > 14) feed.removeChild(feed.lastChild);
+    }
+
+    // Create an auto entry in the journal
+    const entry = {
+      id: state.notebook._nextId++,
+      type: "auto",
+      title: msg,
+      body: "",
+      gen, pop,
+      rle: null, rleOffX: 0, rleOffY: 0,
+      cameraX: state.cameraX, cameraY: state.cameraY, zoom: state.zoom,
+      pinX: null, pinY: null,
+      color: "#9dc5d2",
+      isScene: false,
+      createdAt: Date.now(),
+    };
+    state.notebook.entries.push(entry);
+    state.notebook.entries.sort((a, b) => a.gen - b.gen);
+    nbSave();
+    if (state.notebook.open) nbRender();
+    nbUpdateMarkers();
+  }
+
+  function drawNotebookPins() {
+    if (!state.notebook.entries.length) return;
+    const z = state.zoom;
+    const ccx = canvas.width / 2, ccy = canvas.height / 2;
+    let pinIdx = 1;
+    for (const entry of state.notebook.entries) {
+      if (entry.pinX === null) { pinIdx++; continue; }
+      const sx = (entry.pinX - state.cameraX) * z + ccx;
+      const sy = (entry.pinY - state.cameraY) * z + ccy;
+      if (sx < -30 || sx > canvas.width + 30 || sy < -30 || sy > canvas.height + 30) { pinIdx++; continue; }
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 6;
+      // Circle head
+      ctx.beginPath();
+      ctx.arc(sx, sy - 6, 9, 0, Math.PI * 2);
+      ctx.fillStyle = entry.color;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Stem
+      ctx.beginPath();
+      ctx.moveTo(sx - 3.5, sy - 1); ctx.lineTo(sx + 3.5, sy - 1); ctx.lineTo(sx, sy + 6);
+      ctx.closePath(); ctx.fillStyle = entry.color; ctx.fill();
+      ctx.shadowBlur = 0;
+      // Number
+      ctx.fillStyle = "rgba(0,0,0,0.9)"; ctx.font = "bold 8px monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(String(pinIdx), sx, sy - 6);
+      ctx.restore();
+      pinIdx++;
+    }
+  }
+
+  function nbPlayScenes() {
+    const scenes = state.notebook.entries.filter(e => e.isScene).sort((a, b) => a.gen - b.gen);
+    if (scenes.length === 0) {
+      setOverlay("No scenes marked — edit entries and check \"Mark as scene\".");
+      setTimeout(() => setOverlay(""), 3000);
+      return;
+    }
+    const overlay = document.getElementById("sceneOverlay");
+    const counterEl = document.getElementById("sceneCounter");
+    const titleEl = document.getElementById("sceneTitle");
+    const bodyEl = document.getElementById("sceneBody");
+    overlay.classList.remove("hidden");
+    state.notebook.scenePlaying = true;
+
+    function playScene(idx) {
+      if (!state.notebook.scenePlaying || idx >= scenes.length) { endScenes(); return; }
+      const sc = scenes[idx];
+      counterEl.textContent = `Scene ${idx + 1} of ${scenes.length}`;
+      titleEl.textContent = sc.title;
+      bodyEl.textContent = sc.body || "";
+      nbRestoreEntry(sc.id);
+      state.running = true; syncPlayUI(true, false);
+      state.notebook._sceneTimer = setTimeout(() => {
+        state.running = false; syncPlayUI(false, false);
+        state.notebook._sceneTimer = setTimeout(() => playScene(idx + 1), 700);
+      }, 8000);
+    }
+
+    function endScenes() {
+      state.notebook.scenePlaying = false;
+      state.running = false; syncPlayUI(false, false);
+      overlay.classList.add("hidden");
+      setOverlay("Notebook playback complete.");
+      setTimeout(() => setOverlay(""), 2500);
+    }
+
+    document.getElementById("sceneStopBtn").onclick = () => {
+      if (state.notebook._sceneTimer) clearTimeout(state.notebook._sceneTimer);
+      endScenes();
+    };
+    playScene(0);
+  }
+
+  function nbExport() {
+    const entries = state.notebook.entries;
+    if (entries.length === 0) {
+      setOverlay("Notebook is empty — nothing to export.");
+      setTimeout(() => setOverlay(""), 2000);
+      return;
+    }
+    const lines = [
+      "AUTOMATA ARCADE — NOTEBOOK",
+      `Exported: ${new Date().toLocaleString()}`,
+      `Entries: ${entries.length}`,
+      "",
+    ];
+    for (const e of entries) {
+      lines.push("─".repeat(44));
+      const tag = e.type === "auto" ? " [auto]" : "";
+      lines.push(`Gen ${e.gen.toLocaleString()} · ${e.pop.toLocaleString()} cells${tag}`);
+      lines.push(e.title);
+      if (e.body) lines.push(e.body);
+      if (e.isScene) lines.push("[★ Scene]");
+      if (e.pinX !== null) lines.push(`[📍 Pin at (${e.pinX}, ${e.pinY})]`);
+      if (e.rle) lines.push(`[📷 Snapshot: ${e.rle.split("\n")[0]}]`);
+      lines.push("");
+    }
+    const text = lines.join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setOverlay("Notebook copied to clipboard.");
+      setTimeout(() => setOverlay(""), 2500);
+    }).catch(() => {
+      const w = window.open("", "_blank", "width=620,height=520");
+      if (w) w.document.write(`<pre style="font:12px monospace;padding:20px;background:#07121a;color:#daf6ff;white-space:pre-wrap">${text.replace(/</g,"&lt;")}</pre>`);
+    });
+  }
+
+  function setupNotebook() {
+    nbLoad();
+    nbRender();
+
+    document.getElementById("notebookBtn")?.addEventListener("click", () => {
+      if (state.notebook.open) nbClosePanel(); else nbOpenPanel();
+    });
+    document.getElementById("nbCloseBtn")?.addEventListener("click", nbClosePanel);
+
+    document.getElementById("nbNewBtn")?.addEventListener("click", () => {
+      nbCancelForm();
+      nbShowForm();
+    });
+
+    document.getElementById("nbPinBtn")?.addEventListener("click", () => {
+      if (!state.notebook.open) nbOpenPanel();
+      state.notebook.pinMode = true;
+      canvas.style.cursor = "crosshair";
+      document.getElementById("notebookBtn")?.classList.add("nb-pin-active");
+      setOverlay("📍 Click anywhere on the board to drop a pin…");
+      setTimeout(() => { if (state.notebook.pinMode) setOverlay(""); }, 4000);
+    });
+
+    document.getElementById("nbSaveBtn")?.addEventListener("click", nbCreateEntry);
+    document.getElementById("nbCancelBtn")?.addEventListener("click", nbCancelForm);
+
+    document.getElementById("nbTitleInput")?.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); nbCreateEntry(); }
+      if (ev.key === "Escape") nbCancelForm();
+    });
+
+    document.getElementById("nbScenesBtn")?.addEventListener("click", nbPlayScenes);
+    document.getElementById("nbExportBtn")?.addEventListener("click", nbExport);
+
+    // Escape closes pin mode
+    window.addEventListener("keydown", ev => {
+      if (ev.key === "Escape" && state.notebook.pinMode) {
+        state.notebook.pinMode = false;
+        canvas.style.cursor = "";
+        document.getElementById("notebookBtn")?.classList.remove("nb-pin-active");
+        setOverlay("");
+      }
+    }, { capture: true });
+  }
+
   function init() {
     setupControls();
     setupCanvasInput();
     setupShortcuts();
     setupTimeline();
+    setupRuleLab();
+    setupPhysicsLab();
+    setupWaveLab();
+    setupTypeLab();
+    setupEvoLab();
+    setupZoneLab();
+    setupFieldLab();
+    setupLibrary();
+    setupCaptureLab();
+    setupAnalysisLab();
+    setupNotebook();
     buildPalette();
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
