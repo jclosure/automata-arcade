@@ -1394,7 +1394,8 @@
   };
 
   const MANIFOLD_MODES = ["sphere", "torus", "klein", "mobius", "cylinder"];
-  function is3DMode() { return MANIFOLD_MODES.includes(state.mode); }
+  function is3DMode()  { return MANIFOLD_MODES.includes(state.mode); }
+  function isGPUMode() { return window.ASF && ASF.isGPUMode(state.mode); }
 
   // 3D modes use torus wrapping for their topology; flat sandbox/arcade fall back to flat (infinite).
   function activeSurface() {
@@ -2835,6 +2836,12 @@
   }
 
   function draw() {
+    if (isGPUMode()) {
+      ASF.blit(ctx, canvas.width, canvas.height, state.cameraX, state.cameraY, state.zoom);
+      drawNotebookPins();
+      drawHover();
+      return;
+    }
     drawBackground();
     drawGrid();
     drawCells();
@@ -2863,6 +2870,10 @@
     if (state.mode === "arcade" && state.levelState) {
       const level = LEVELS[state.levelIndex];
       objectiveText.textContent = `${level.objective} ${level.progress(state.levelState)}`;
+    } else if (isGPUMode()) {
+      const spec = window.ASF && ASF.SPECS[state.mode];
+      const name = spec ? spec.name : state.mode;
+      objectiveText.textContent = `${name} — GPU shader engine · Paint to add life · Pan to explore.`;
     } else if (is3DMode()) {
       const surface = SURFACES[state.mode];
       const surfName = surface ? surface.name : "Sphere";
@@ -2904,10 +2915,28 @@
   }
 
   function tickForward() {
+    if (isGPUMode()) {
+      ASF.step();
+      state.generation += 1;
+      if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAutoGPU();
+      return;
+    }
     if (state.leniaMode) stepLenia();
     else stepLife();
     snapshotNow();
     if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAuto();
+  }
+
+  function nbCheckAutoGPU() {
+    // Lightweight GPU mode auto-detection using generation counter as proxy
+    // Full pixel readback is expensive; only check every 150 gens
+    if (state.generation % 150 !== 0) return;
+    const gen = state.generation;
+    const nb = state.notebook;
+    const w = nb._watch;
+    if (gen - (w._lastAutoGenGPU || -Infinity) < 120) return;
+    w._lastAutoGenGPU = gen;
+    nbPushAutoFeed(gen, 0, `Gen ${gen} — GPU automaton running (${ASF.getActiveSpecId()})`);
   }
 
   function tickBackward() {
@@ -3067,6 +3096,20 @@
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
 
+    // GPU mode: paint by writing into the state texture
+    if (isGPUMode() && state.canvasMode === "paint") {
+      if (ev.button === 0 || ev.button === 2) {
+        const rect = canvas.getBoundingClientRect();
+        const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+        const value = ev.button === 2 ? 0.0 : 1.0;
+        ASF.paintAt(gxgy.x, gxgy.y, 4, value);
+        ev.preventDefault();
+        return;
+      }
+      if (ev.button === 1) { state.pointer.mode = "pan"; return; }
+      return;
+    }
+
     // Notebook pin drop mode intercepts left-click
     if (state.notebook.pinMode && ev.button === 0) {
       const rect = canvas.getBoundingClientRect();
@@ -3186,6 +3229,15 @@
     if (state.pointer.mode === "pan") {
       state.cameraX -= dx / state.zoom;
       state.cameraY -= dy / state.zoom;
+      return;
+    }
+
+    // GPU drag-paint
+    if (isGPUMode() && state.canvasMode === "paint" && state.pointer.down) {
+      const rect = canvas.getBoundingClientRect();
+      const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      const value = (ev.buttons & 2) ? 0.0 : 1.0;
+      ASF.paintAt(gxgy.x, gxgy.y, 4, value);
       return;
     }
 
@@ -3407,30 +3459,69 @@
     return card;
   }
 
-  function buildPalette() {
+  function buildPalette(query = "") {
     paletteList.innerHTML = "";
-    const customs = lsLoad(LS_CUSTOM_PREFABS);
+    const q = query.trim().toLowerCase();
+    const matches = (p) => !q || p.name.toLowerCase().includes(q)
+      || (p.type || "").toLowerCase().includes(q)
+      || (p.desc || "").toLowerCase().includes(q)
+      || (p.category || "").toLowerCase().includes(q);
+
+    const customs = lsLoad(LS_CUSTOM_PREFABS).filter(matches);
+    const builtins = PREFABS.filter(matches);
+
+    if (customs.length === 0 && builtins.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "palette-empty";
+      empty.textContent = `No patterns match "${query}"`;
+      paletteList.appendChild(empty);
+      return;
+    }
+
     if (customs.length > 0) {
       const hdr = document.createElement("div");
       hdr.className = "palette-section-hdr";
       hdr.textContent = "Custom";
       paletteList.appendChild(hdr);
-      for (const p of [...customs].reverse()) {
-        paletteList.appendChild(makePaletteCard(p, true));
+      for (const p of [...customs].reverse()) paletteList.appendChild(makePaletteCard(p, true));
+    }
+
+    const sections = ["Required", "Custom", "Circuit"];
+    const bySection = Object.fromEntries(sections.map(s => [s, builtins.filter(p => p.category === s)]));
+
+    if (q) {
+      if (customs.length > 0 && builtins.length > 0) {
+        const hdr2 = document.createElement("div");
+        hdr2.className = "palette-section-hdr";
+        hdr2.textContent = "Built-in";
+        paletteList.appendChild(hdr2);
       }
-      const hdr2 = document.createElement("div");
-      hdr2.className = "palette-section-hdr";
-      hdr2.textContent = "Built-in";
-      paletteList.appendChild(hdr2);
+      for (const p of builtins) paletteList.appendChild(makePaletteCard(p, false));
+    } else {
+      if (customs.length > 0) {
+        const hdr2 = document.createElement("div");
+        hdr2.className = "palette-section-hdr";
+        hdr2.textContent = "Built-in";
+        paletteList.appendChild(hdr2);
+      }
+      for (const sec of sections) {
+        if (bySection[sec].length === 0) continue;
+        const hdr = document.createElement("div");
+        hdr.className = "palette-section-hdr palette-section-hdr--sub";
+        hdr.textContent = sec;
+        paletteList.appendChild(hdr);
+        for (const p of bySection[sec]) paletteList.appendChild(makePaletteCard(p, false));
+      }
     }
-    for (const prefab of PREFABS) {
-      paletteList.appendChild(makePaletteCard(prefab, false));
+
+    const allVisible = [...lsLoad(LS_CUSTOM_PREFABS).filter(matches).reverse(), ...builtins];
+    const firstPrefab = allVisible[0] ? (getPrefabById(allVisible[0].id) || allVisible[0]) : PREFABS[0];
+    const currentVisible = allVisible.some(p => p.id === state.selectedPrefabId);
+    if (!currentVisible) {
+      state.selectedPrefabId = firstPrefab.id;
+      renderInspector(firstPrefab);
     }
-    const firstId = customs.length > 0 ? customs[customs.length - 1].id : PREFABS[0].id;
-    const firstPrefab = getPrefabById(firstId) || PREFABS[0];
-    state.selectedPrefabId = firstPrefab.id;
     refreshPaletteSelection();
-    renderInspector(firstPrefab);
   }
 
   function refreshPaletteSelection() {
@@ -3492,8 +3583,30 @@
     });
 
     modeSelect.addEventListener("change", () => {
+      const prevMode = state.mode;
       state.mode = modeSelect.value;
-      if (is3DMode()) {
+
+      // Tear down GPU if leaving a GPU mode
+      if (window.ASF && ASF.isGPUMode(prevMode) && !ASF.isGPUMode(state.mode)) {
+        ASF.deactivate();
+        asfPanelSetVisible(false);
+      }
+
+      if (isGPUMode()) {
+        canvas.style.display = "block";
+        sphereCanvas.style.display = "none";
+        state.levelState = null;
+        setOverlay("");
+        const ok = ASF.activate(state.mode);
+        if (!ok) {
+          setOverlay("WebGL 2 not available — GPU modes require a modern browser.");
+          state.mode = "sandbox";
+          modeSelect.value = "sandbox";
+        } else {
+          asfPanelSetVisible(true);
+          asfSyncPanel();
+        }
+      } else if (is3DMode()) {
         canvas.style.display = "none";
         sphereCanvas.style.display = "block";
         if (state.mode === "sphere") {
@@ -5161,6 +5274,125 @@
     }, { capture: true });
   }
 
+  // ─── ASF panel ────────────────────────────────────────────────────────────
+
+  function asfPanelSetVisible(show) {
+    const panel = document.getElementById("asfPanel");
+    const body  = document.getElementById("inspectorBody");
+    if (!panel || !body) return;
+    panel.style.display = show ? "" : "none";
+    body.style.display  = show ? "none" : "";
+  }
+
+  function asfSyncPanel() {
+    if (!window.ASF) return;
+    const specId = ASF.getActiveSpecId();
+    const spec   = ASF.SPECS[specId];
+    if (!spec) return;
+    const nameEl = document.getElementById("asfModeName");
+    if (nameEl) nameEl.textContent = spec.name;
+    // Show/hide sections based on spec type
+    const lSec = document.getElementById("asfLeniaSection");
+    const gSec = document.getElementById("asfGsSection");
+    const isGS = specId === "gray-scott";
+    if (lSec) lSec.style.display = isGS ? "none" : "";
+    if (gSec) gSec.style.display = isGS ? ""     : "none";
+    // Sync slider values from pipeline
+    const syncSlider = (id, outId, key) => {
+      const el = document.getElementById(id);
+      const out = document.getElementById(outId);
+      const val = ASF.getParam(key);
+      if (el && val !== undefined) { el.value = val; if (out) out.textContent = Number(val).toFixed(4); }
+    };
+    syncSlider("asfMu",    "asfMuOut",    "mu");
+    syncSlider("asfSigma", "asfSigmaOut", "sigma");
+    syncSlider("asfDt",    "asfDtOut",    "dt");
+    syncSlider("asfF",     "asfFOut",     "F");
+    syncSlider("asfK",     "asfKOut",     "K");
+    // Populate creature list
+    const list = document.getElementById("asfCreatureList");
+    if (list && ASF.CREATURES) {
+      list.innerHTML = "";
+      ASF.CREATURES.filter(c => c.specId === specId).forEach(c => {
+        const btn = document.createElement("button");
+        btn.className = "asf-creature-btn";
+        btn.textContent = c.name;
+        btn.title = c.desc;
+        btn.addEventListener("click", () => {
+          const [W, H] = ASF.getWorldSize();
+          ASF.spawnCreature(c.id, W/2, H/2);
+        });
+        list.appendChild(btn);
+      });
+    }
+  }
+
+  function setupASF() {
+    if (!window.ASF) return;
+
+    const slider = (id, outId, key, format) => {
+      const el  = document.getElementById(id);
+      const out = document.getElementById(outId);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        const v = Number(el.value);
+        if (out) out.textContent = (format || (x => x.toFixed(4)))(v);
+        ASF.setParam(key, v);
+      });
+    };
+
+    slider("asfMu",    "asfMuOut",    "mu");
+    slider("asfSigma", "asfSigmaOut", "sigma");
+    slider("asfDt",    "asfDtOut",    "dt");
+    slider("asfF",     "asfFOut",     "F");
+    slider("asfK",     "asfKOut",     "K");
+
+    const densEl = document.getElementById("asfDensity");
+    const densOut = document.getElementById("asfDensityOut");
+    if (densEl) {
+      densEl.addEventListener("input", () => {
+        if (densOut) densOut.textContent = Number(densEl.value).toFixed(2);
+      });
+    }
+
+    document.getElementById("asfRandomizeBtn")?.addEventListener("click", () => {
+      const density = densEl ? Number(densEl.value) : 0.15;
+      ASF.randomize(density);
+    });
+
+    document.getElementById("asfClearBtn")?.addEventListener("click", () => {
+      if (!window.ASF || !ASF.isReady()) return;
+      const specId = ASF.getActiveSpecId();
+      if (specId === "gray-scott") {
+        ASF.activate("gray-scott"); // re-seed with GS initial condition
+        asfSyncPanel();
+      } else {
+        ASF.randomize(0.0001); // near-zero density = effectively clear
+      }
+    });
+
+    document.getElementById("asfColormap")?.addEventListener("change", (e) => {
+      ASF.recompileDisplay(e.target.value);
+    });
+
+    // Gray-Scott presets
+    document.querySelectorAll(".asf-gs-preset").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const F = parseFloat(btn.dataset.f);
+        const K = parseFloat(btn.dataset.k);
+        ASF.setParam("F", F);
+        ASF.setParam("K", K);
+        const fEl = document.getElementById("asfF");
+        const kEl = document.getElementById("asfK");
+        if (fEl) { fEl.value = F; document.getElementById("asfFOut").textContent = F.toFixed(4); }
+        if (kEl) { kEl.value = K; document.getElementById("asfKOut").textContent = K.toFixed(4); }
+        // Re-seed for new params
+        ASF.activate(ASF.getActiveSpecId());
+        asfSyncPanel();
+      });
+    });
+  }
+
   function init() {
     setupControls();
     setupCanvasInput();
@@ -5177,7 +5409,12 @@
     setupCaptureLab();
     setupAnalysisLab();
     setupNotebook();
+    setupASF();
     buildPalette();
+    const paletteSearchEl = document.getElementById("paletteSearch");
+    if (paletteSearchEl) {
+      paletteSearchEl.addEventListener("input", () => buildPalette(paletteSearchEl.value));
+    }
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
