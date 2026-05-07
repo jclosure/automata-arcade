@@ -336,12 +336,15 @@ float sigmoidSmooth(float x, float a, float alpha) {
       }
       case 'smoothlife': {
         bodyGlsl = `
-  float inner = pot0.r;  // disk potential
-  float outer = pot1.r;  // ring potential
+  float inner = pot0.r;
+  float outer = pot1.r;
   float alphaN = uSigmaN, alphaM = uSigmaM;
   float b1 = uB1, b2 = uB2, d1 = uD1, d2 = uD2;
-  float sn = sigmoidSmooth(outer, sigmoidSmooth(b1,d1,inner,alphaM) + sigmoidSmooth(b2,d2,inner,alphaM)*0.5, alphaN);
-  float growth = 2.0 * sn - 1.0;
+  float sm = sigmoidSmooth(inner, 0.5, alphaM);
+  float sc = mix(b1, d1, sm);
+  float sw = mix(b2, d2, sm);
+  float alive = sigmoidSmooth(outer, sc, alphaN) * (1.0 - sigmoidSmooth(outer, sc + sw, alphaN));
+  float growth = 2.0 * alive - 1.0;
   fragNext = vec4(clamp(state.r + uDt * growth, 0.0, 1.0), state.g, state.b, state.a);`;
         break;
       }
@@ -370,12 +373,6 @@ ${potAggr}
         bodyGlsl = '  fragNext = state;';
     }
 
-    // For custom glsl, provide a way to write fragNext
-    const needsFragNext = g.type !== 'glsl';
-    const glslHeader = g.type === 'glsl'
-      ? `out vec4 fragNext;\nvec4 state;\n`
-      : `out vec4 fragNext;\n`;
-
     return `#version 300 es
 precision highp float;
 uniform sampler2D uState;
@@ -398,41 +395,69 @@ ${bodyGlsl}
   function makeDisplayFrag(spec) {
     const d = spec.display || {};
     const colormap = d.colormap || 'ocean';
-
+    let cmapDecl = '';
     let colorBodyGlsl;
     if (colormap === 'rgb') {
       colorBodyGlsl = `fragColor = vec4(state.r, state.g, state.b, 1.0);`;
     } else if (colormap === 'custom' && d.glsl) {
       colorBodyGlsl = d.glsl;
     } else {
-      const cmapFn = COLORMAPS[colormap] || COLORMAPS.ocean;
+      cmapDecl = COLORMAPS[colormap] || COLORMAPS.ocean;
       colorBodyGlsl = `fragColor = vec4(colormap(state.r), 1.0);`;
-      return `#version 300 es
-precision highp float;
-uniform sampler2D uState;
-uniform vec2 uCanvas, uWorld, uCamera;
-uniform float uZoom;
-in vec2 vUV; out vec4 fragColor;
-${cmapFn}
-void main() {
-  vec2 worldPos = (vUV * uCanvas - uCanvas * 0.5) / uZoom + uCamera;
-  vec4 state = texture(uState, fract(worldPos / uWorld));
-  ${colorBodyGlsl}
-}`;
     }
-
     return `#version 300 es
 precision highp float;
 uniform sampler2D uState;
+uniform sampler2D uPaint;
 uniform vec2 uCanvas, uWorld, uCamera;
 uniform float uZoom;
 in vec2 vUV; out vec4 fragColor;
+${cmapDecl}
 void main() {
   vec2 worldPos = (vUV * uCanvas - uCanvas * 0.5) / uZoom + uCamera;
   vec4 state = texture(uState, fract(worldPos / uWorld));
+  vec4 paint  = texture(uPaint, fract(worldPos / uWorld));
+  float r0 = state.r + paint.r * (1.0 - state.r);
+  r0 = r0 * (1.0 - paint.g);
+  state = vec4(clamp(r0, 0.0, 1.0), state.g, state.b, state.a);
   ${colorBodyGlsl}
 }`;
   }
+
+  // ─── GPU paint shaders ────────────────────────────────────────────────────
+
+  const PAINT_CIRCLE_FRAG = `#version 300 es
+precision highp float;
+uniform vec2 uBrushPt;
+uniform float uBrushR;
+uniform float uBrushV;
+uniform vec2 uWorld;
+in vec2 vUV;
+out vec4 fragPaint;
+void main() {
+  vec2 px = vUV * uWorld;
+  vec2 d = abs(px - uBrushPt);
+  d = min(d, uWorld - d);
+  float dist = length(d);
+  float s = max(0.0, 1.0 - dist / max(uBrushR, 0.5));
+  s = s * s;
+  if (s < 0.001) discard;
+  fragPaint = vec4(max(0.0, uBrushV) * s, max(0.0, -uBrushV) * s, 0.0, 1.0);
+}`;
+
+  const MERGE_FRAG = `#version 300 es
+precision highp float;
+uniform sampler2D uState;
+uniform sampler2D uPaint;
+in vec2 vUV;
+out vec4 fragNext;
+void main() {
+  vec4 state = texture(uState, vUV);
+  vec4 paint  = texture(uPaint, vUV);
+  float r = state.r + paint.r * (1.0 - state.r);
+  r = r * (1.0 - paint.g);
+  fragNext = vec4(clamp(r, 0.0, 1.0), state.g, state.b, state.a);
+}`;
 
   // ─── Pipeline ─────────────────────────────────────────────────────────────
 
@@ -465,11 +490,72 @@ void main() {
       this.d2 = (spec.growth.params && spec.growth.params.d2) || 0.445;
       this.sigmaN = (spec.growth.params && spec.growth.params.sigmaN) || 0.028;
       this.sigmaM = (spec.growth.params && spec.growth.params.sigmaM) || 0.147;
+      // Paint buffer
+      this._paintTex  = this._makePaintTex();
+      this._paintFBO  = this._makePaintFBO(this._paintTex);
+      this._paintProg = linkProgram(gl, VERT, PAINT_CIRCLE_FRAG);
+      this._mergeProg = linkProgram(gl, VERT, MERGE_FRAG);
+      this._hasPaint  = false;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._paintFBO);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    _makePaintTex() {
+      const gl = this.gl;
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.W, this.H, 0, gl.RGBA, gl.FLOAT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      return t;
+    }
+
+    _makePaintFBO(tex) {
+      const gl = this.gl;
+      const f = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return f;
+    }
+
+    _mergePaint() {
+      const gl = this.gl;
+      gl.viewport(0, 0, this.W, this.H);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._state.writeFBO);
+      drawFullscreen(gl, this._mergeProg, this._quad, (p) => {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._state.readTex);
+        gl.uniform1i(ul(gl, p, 'uState'), 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this._paintTex);
+        gl.uniform1i(ul(gl, p, 'uPaint'), 1);
+      });
+      this._state.swap();
+    }
+
+    _clearPaint() {
+      const gl = this.gl;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._paintFBO);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
     step() {
       const gl = this.gl;
       gl.viewport(0, 0, this.W, this.H);
+
+      // Merge pending paint into state before simulation
+      if (this._hasPaint) {
+        this._mergePaint();
+        this._clearPaint();
+        this._hasPaint = false;
+      }
 
       // ── Kernel passes ──
       for (let i = 0; i < this._kProgs.length; i++) {
@@ -522,8 +608,11 @@ void main() {
       drawFullscreen(gl, this._dProg, this._quad, (p) => {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this._state.readTex);
+        gl.uniform1i(ul(gl, p, 'uState'), 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this._paintTex);
+        gl.uniform1i(ul(gl, p, 'uPaint'), 1);
         setUniforms(gl, p, {
-          uState: 0,
           uCanvas: [canvasW, canvasH],
           uWorld:  [this.W, this.H],
           uCamera: [cameraX, cameraY],
@@ -542,21 +631,24 @@ void main() {
     }
 
     paintAt(wx, wy, radius, value) {
-      // CPU-side paint: read, modify, upload
-      const data = this.readPixels();
-      const W = this.W, H = this.H;
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          if (dx*dx + dy*dy > radius*radius) continue;
-          const cx = ((Math.round(wx) + dx) % W + W) % W;
-          const cy = ((Math.round(wy) + dy) % H + H) % H;
-          const idx = (cy * W + cx) * 4;
-          const dist = Math.sqrt(dx*dx + dy*dy) / radius;
-          const strength = Math.max(0, 1 - dist * dist);
-          data[idx] = Math.min(1, Math.max(0, data[idx] * (1 - strength) + value * strength));
-        }
-      }
-      this.upload(data);
+      const gl = this.gl;
+      const brushV = value > 0.5 ? 1.0 : -1.0;
+      gl.viewport(0, 0, this.W, this.H);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._paintFBO);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      drawFullscreen(gl, this._paintProg, this._quad, (p) => {
+        setUniforms(gl, p, {
+          uBrushPt: [wx, wy],
+          uBrushR:  radius,
+          uBrushV:  brushV,
+          uWorld:   [this.W, this.H],
+        });
+      });
+      gl.disable(gl.BLEND);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this._hasPaint = true;
     }
 
     dispose() {
@@ -564,7 +656,9 @@ void main() {
       this._state.dispose();
       this._pots.forEach(p => { gl.deleteTexture(p.tex); gl.deleteFramebuffer(p.fbo); });
       this._kProgs.forEach(p => gl.deleteProgram(p));
-      [this._gProg, this._dProg].forEach(p => gl.deleteProgram(p));
+      [this._gProg, this._dProg, this._paintProg, this._mergeProg].forEach(p => gl.deleteProgram(p));
+      gl.deleteTexture(this._paintTex);
+      gl.deleteFramebuffer(this._paintFBO);
       gl.deleteBuffer(this._quad);
     }
   }
@@ -920,15 +1014,56 @@ void main() {
     isReady() { return _ready && _pipeline !== null; },
 
     recompileDisplay(colormap) {
-      if (!_ready || !_pipeline || !_activeSpecId) return;
-      const spec = JSON.parse(JSON.stringify(SPECS[_activeSpecId]));
-      spec.display.colormap = colormap;
+      if (!_ready || !_pipeline) return;
+      _pipeline.spec.display = _pipeline.spec.display || {};
+      _pipeline.spec.display.colormap = colormap;
       try {
         const gl = _gl;
         if (_pipeline._dProg) gl.deleteProgram(_pipeline._dProg);
-        _pipeline._dProg = linkProgram(gl, VERT, makeDisplayFrag(spec));
-        SPECS[_activeSpecId] = spec; // persist selection
+        _pipeline._dProg = linkProgram(gl, VERT, makeDisplayFrag(_pipeline.spec));
       } catch(e) { console.error('[ASF] Display recompile failed:', e); }
+    },
+
+    setKernelParam(idx, key, val) {
+      if (!_pipeline) return;
+      const k = _pipeline.spec.kernels[idx];
+      if (!k) return;
+      k[key] = val;
+      if (key === 'radius') {
+        const gl = _gl;
+        gl.deleteProgram(_pipeline._kProgs[idx]);
+        _pipeline._kProgs[idx] = linkProgram(gl, VERT, kernelFragSrc(k));
+      }
+    },
+
+    getKernelParams(idx) {
+      if (!_pipeline) return null;
+      const k = _pipeline.spec.kernels[idx];
+      if (!k) return null;
+      return { type: k.type || 'ring', radius: k.radius || 13, innerFrac: k.innerFrac || 0, alpha: k.alpha || 4 };
+    },
+
+    getKernelCount() {
+      return _pipeline ? _pipeline.spec.kernels.length : 0;
+    },
+
+    recompileGrowth(glslBody) {
+      if (!_pipeline) return { ok: false, error: 'No active pipeline' };
+      _pipeline.spec.growth = { type: 'glsl', glsl: glslBody };
+      try {
+        const gl = _gl;
+        gl.deleteProgram(_pipeline._gProg);
+        _pipeline._gProg = linkProgram(gl, VERT, makeGrowthFrag(_pipeline.spec));
+        return { ok: true };
+      } catch(e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
+    getGrowthGlsl() {
+      if (!_pipeline) return null;
+      const g = _pipeline.spec.growth;
+      return g.type === 'glsl' ? g.glsl : null;
     },
   };
 })();

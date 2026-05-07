@@ -5325,6 +5325,118 @@
         list.appendChild(btn);
       });
     }
+    // Rebuild kernel cards
+    buildKernelCards();
+    // Sync GLSL editor visibility and content
+    const glslSec = document.getElementById("asfGlslSection");
+    const glslEditor = document.getElementById("asfGlslEditor");
+    const glsl = ASF.getGrowthGlsl();
+    if (glslSec) glslSec.style.display = glsl !== null ? "" : "none";
+    if (glslEditor && glsl !== null) glslEditor.value = glsl.trim();
+    // Clear compile status on spec change
+    const statusEl = document.getElementById("asfGlslStatus");
+    const errorEl  = document.getElementById("asfGlslError");
+    if (statusEl) { statusEl.textContent = ""; statusEl.className = "asf-glsl-status"; }
+    if (errorEl)  errorEl.textContent = "";
+  }
+
+  function buildKernelCards() {
+    const list = document.getElementById("asfKernelList");
+    if (!list || !window.ASF || !ASF.isReady()) return;
+    const n = ASF.getKernelCount();
+    list.innerHTML = "";
+    for (let i = 0; i < n; i++) {
+      const k = ASF.getKernelParams(i);
+      if (!k) continue;
+      const card = document.createElement("div");
+      card.className = "asf-kernel-card";
+
+      const typeTag = document.createElement("span");
+      typeTag.className = "asf-kernel-type";
+      typeTag.textContent = `K${i}: ${k.type}`;
+      card.appendChild(typeTag);
+
+      card.appendChild(makeKernelSVG(k));
+
+      card.appendChild(makeKernelSliderRow("Radius", k.radius, 5, 50, 1, (v) => {
+        ASF.setKernelParam(i, "radius", v | 0);
+        refreshKernelCard(card, i);
+      }));
+      if (k.type === "ring") {
+        card.appendChild(makeKernelSliderRow("Inner", k.innerFrac, 0, 0.9, 0.05, (v) => {
+          ASF.setKernelParam(i, "innerFrac", v);
+          refreshKernelCard(card, i);
+        }));
+        card.appendChild(makeKernelSliderRow("Alpha", k.alpha, 1, 8, 0.25, (v) => {
+          ASF.setKernelParam(i, "alpha", v);
+          refreshKernelCard(card, i);
+        }));
+      }
+      list.appendChild(card);
+    }
+  }
+
+  function refreshKernelCard(card, idx) {
+    const k = ASF.getKernelParams(idx);
+    if (!k) return;
+    const old = card.querySelector(".asf-kernel-svg");
+    if (old) card.replaceChild(makeKernelSVG(k), old);
+  }
+
+  function makeKernelSVG(k) {
+    const W = 120, H = 36, pad = 2;
+    const pts = [];
+    for (let i = 0; i <= 80; i++) {
+      const r = i / 80;
+      let w = 0;
+      if (k.type === "disk") {
+        w = r <= 1.0 ? 1.0 : 0.0;
+      } else if (k.type === "ring") {
+        const inner = k.innerFrac || 0;
+        if (r > inner && r < 1.0) {
+          const u = (r - inner) / (1.0 - inner + 1e-9);
+          w = Math.exp((k.alpha || 4) * (1.0 - 1.0 / (4 * u * (1 - u) + 1e-6)));
+        }
+      }
+      pts.push(`${(r * (W - pad * 2) + pad).toFixed(1)},${(H - pad - w * (H - pad * 3)).toFixed(1)}`);
+    }
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.setAttribute("width", W);
+    svg.setAttribute("height", H);
+    svg.classList.add("asf-kernel-svg");
+    const pl = document.createElementNS(ns, "polyline");
+    pl.setAttribute("points", pts.join(" "));
+    pl.setAttribute("fill", "none");
+    pl.setAttribute("stroke", "#5be0bc");
+    pl.setAttribute("stroke-width", "1.5");
+    pl.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(pl);
+    return svg;
+  }
+
+  function makeKernelSliderRow(label, val, min, max, step, onChange) {
+    const row = document.createElement("label");
+    row.className = "asf-row";
+    const sp = document.createElement("span");
+    sp.textContent = label;
+    row.appendChild(sp);
+    const input = document.createElement("input");
+    input.type = "range"; input.min = min; input.max = max;
+    input.step = step; input.value = val;
+    input.className = "asf-slider";
+    const out = document.createElement("span");
+    out.className = "asf-val";
+    out.textContent = Number(val).toFixed(2);
+    input.addEventListener("input", () => {
+      const v = Number(input.value);
+      out.textContent = v.toFixed(2);
+      onChange(v);
+    });
+    row.appendChild(input);
+    row.appendChild(out);
+    return row;
   }
 
   function setupASF() {
@@ -5391,6 +5503,27 @@
         asfSyncPanel();
       });
     });
+
+    // GLSL growth editor
+    const glslCompileBtn = document.getElementById("asfGlslCompileBtn");
+    const glslStatusEl   = document.getElementById("asfGlslStatus");
+    const glslErrorEl    = document.getElementById("asfGlslError");
+    const glslEditorEl   = document.getElementById("asfGlslEditor");
+    if (glslCompileBtn && glslEditorEl) {
+      glslCompileBtn.addEventListener("click", () => {
+        if (!window.ASF || !ASF.isReady()) return;
+        const result = ASF.recompileGrowth(glslEditorEl.value);
+        if (result.ok) {
+          glslStatusEl.textContent = "OK";
+          glslStatusEl.className = "asf-glsl-status asf-glsl-ok";
+          if (glslErrorEl) glslErrorEl.textContent = "";
+        } else {
+          glslStatusEl.textContent = "Error";
+          glslStatusEl.className = "asf-glsl-status asf-glsl-err";
+          if (glslErrorEl) glslErrorEl.textContent = result.error.slice(0, 500);
+        }
+      });
+    }
   }
 
   function init() {

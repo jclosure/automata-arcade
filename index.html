@@ -202,6 +202,28 @@
               <div id="asfCreatureList" class="asf-creature-list"></div>
             </div>
 
+            <div class="asf-section" id="asfKernelSection">
+              <div class="asf-section-title">Kernels</div>
+              <div id="asfKernelList"></div>
+            </div>
+
+            <div class="asf-section" id="asfGlslSection" style="display:none">
+              <div class="asf-section-title">Growth GLSL</div>
+              <textarea id="asfGlslEditor" class="asf-glsl-editor" rows="8" spellcheck="false" autocomplete="off" placeholder="// pot.r/g/b = kernel potentials&#10;// state.r/g/b = current state&#10;// uDt = timestep&#10;// write to fragNext"></textarea>
+              <div class="asf-row" style="margin-top:4px;gap:8px">
+                <button id="asfGlslCompileBtn" class="asf-btn" style="flex:0 0 auto">Compile</button>
+                <span id="asfGlslStatus" class="asf-glsl-status"></span>
+              </div>
+              <pre id="asfGlslError" class="asf-glsl-error"></pre>
+              <div class="asf-glsl-ref">
+                <code>leniaBell(u,mu,sigma)</code> — bell growth<br>
+                <code>sigmoidSmooth(x,a,alpha)</code> — logistic<br>
+                <code>pot.r/g/b/a</code> — kernel potentials<br>
+                <code>state.r/g/b/a</code> — current state<br>
+                write to <code>fragNext</code>
+              </div>
+            </div>
+
             <div class="asf-info">
               <span id="asfStatus">GPU active</span>
             </div>
