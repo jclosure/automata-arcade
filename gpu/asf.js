@@ -163,6 +163,37 @@
       if (t < 0.66) return mix(b, c, (t - 0.33) / 0.33);
       return mix(c, d, (t - 0.66) / 0.34);
     }`,
+    organelle: `vec3 colormap(float t) {
+      t = clamp(t, 0.0, 1.0);
+      vec3 void_c    = vec3(0.02, 0.02, 0.07);
+      vec3 membrane  = vec3(0.00, 0.50, 0.90);
+      vec3 cytoplasm = vec3(0.04, 0.76, 0.50);
+      vec3 granule   = vec3(0.82, 0.70, 0.06);
+      vec3 nucleus   = vec3(1.00, 0.90, 0.55);
+      if (t < 0.10) return mix(void_c, membrane, t / 0.10);
+      if (t < 0.35) return mix(membrane, cytoplasm, (t - 0.10) / 0.25);
+      if (t < 0.65) return mix(cytoplasm, granule, (t - 0.35) / 0.30);
+      return mix(granule, nucleus, (t - 0.65) / 0.35);
+    }`,
+    neon: `vec3 colormap(float t) {
+      t = clamp(t, 0.0, 1.0);
+      vec3 glow  = vec3(0.00, 1.00, 0.55) * pow(t, 0.55);
+      vec3 core  = vec3(1.00, 0.05, 0.90) * pow(t, 2.8);
+      vec3 halo  = vec3(0.20, 0.40, 1.00) * pow(t, 0.25) * 0.28;
+      return clamp(glow + core + halo, 0.0, 1.0);
+    }`,
+    lava: `vec3 colormap(float t) {
+      t = clamp(t, 0.0, 1.0);
+      vec3 dark  = vec3(0.02, 0.01, 0.02);
+      vec3 ember = vec3(0.55, 0.04, 0.01);
+      vec3 fire  = vec3(0.97, 0.32, 0.02);
+      vec3 hot   = vec3(1.00, 0.88, 0.28);
+      vec3 white = vec3(1.00, 0.98, 0.92);
+      if (t < 0.20) return mix(dark,  ember, t / 0.20);
+      if (t < 0.50) return mix(ember, fire,  (t - 0.20) / 0.30);
+      if (t < 0.78) return mix(fire,  hot,   (t - 0.50) / 0.28);
+      return mix(hot, white, (t - 0.78) / 0.22);
+    }`,
     viridis: `vec3 colormap(float t) {
       t = clamp(t, 0.0, 1.0);
       vec3 c = vec3(0.2777, 0.0054, 0.3341)
@@ -411,16 +442,25 @@ uniform sampler2D uState;
 uniform sampler2D uPaint;
 uniform vec2 uCanvas, uWorld, uCamera;
 uniform float uZoom;
+uniform float uEdgeStr;
 in vec2 vUV; out vec4 fragColor;
 ${cmapDecl}
 void main() {
   vec2 worldPos = (vUV * uCanvas - uCanvas * 0.5) / uZoom + uCamera;
-  vec4 state = texture(uState, fract(worldPos / uWorld));
-  vec4 paint  = texture(uPaint, fract(worldPos / uWorld));
+  vec2 uv = fract(worldPos / uWorld);
+  vec2 tx = 1.0 / uWorld;
+  vec4 state = texture(uState, uv);
+  vec4 paint  = texture(uPaint, uv);
   float r0 = state.r + paint.r * (1.0 - state.r);
   r0 = r0 * (1.0 - paint.g);
   state = vec4(clamp(r0, 0.0, 1.0), state.g, state.b, state.a);
   ${colorBodyGlsl}
+  if (uEdgeStr > 0.001) {
+    float gx = texture(uState, uv + vec2(tx.x, 0.0)).r - texture(uState, uv - vec2(tx.x, 0.0)).r;
+    float gy = texture(uState, uv + vec2(0.0, tx.y)).r - texture(uState, uv - vec2(0.0, tx.y)).r;
+    float edge = length(vec2(gx, gy)) * uEdgeStr;
+    fragColor.rgb = clamp(fragColor.rgb + vec3(0.45, 0.75, 1.0) * edge, 0.0, 1.0);
+  }
 }`;
   }
 
@@ -490,6 +530,8 @@ void main() {
       this.d2 = (spec.growth.params && spec.growth.params.d2) || 0.445;
       this.sigmaN = (spec.growth.params && spec.growth.params.sigmaN) || 0.028;
       this.sigmaM = (spec.growth.params && spec.growth.params.sigmaM) || 0.147;
+      // Display params (hot-updatable)
+      this.edgeStr = 0.0;
       // Paint buffer
       this._paintTex  = this._makePaintTex();
       this._paintFBO  = this._makePaintFBO(this._paintTex);
@@ -613,10 +655,11 @@ void main() {
         gl.bindTexture(gl.TEXTURE_2D, this._paintTex);
         gl.uniform1i(ul(gl, p, 'uPaint'), 1);
         setUniforms(gl, p, {
-          uCanvas: [canvasW, canvasH],
-          uWorld:  [this.W, this.H],
-          uCamera: [cameraX, cameraY],
-          uZoom:   zoom,
+          uCanvas:  [canvasW, canvasH],
+          uWorld:   [this.W, this.H],
+          uCamera:  [cameraX, cameraY],
+          uZoom:    zoom,
+          uEdgeStr: this.edgeStr,
         });
       });
       ctx.drawImage(this.gpuCanvas, 0, 0);
@@ -697,10 +740,15 @@ void main() {
       display: {
         colormap: 'custom',
         glsl: `
-          float A = state.r, B = state.g;
-          vec3 col = mix(vec3(0.039, 0.102, 0.176), vec3(0.95, 0.75, 0.05), B);
-          col = mix(col, vec3(1.0, 0.99, 0.96), max(0.0, A - 0.7) * 3.0);
-          fragColor = vec4(col, 1.0);`,
+          float B = state.g, A = state.r;
+          float b = clamp(B * 5.5, 0.0, 1.0);
+          float dep = clamp((1.0 - A) * 2.5, 0.0, 1.0);
+          vec3 bg   = vec3(0.03, 0.05, 0.14);
+          vec3 cyan = vec3(0.00, 0.85, 0.95);
+          vec3 gold = vec3(0.92, 0.72, 0.04);
+          vec3 col  = mix(bg, cyan, b);
+          col = mix(col, gold, dep);
+          fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);`,
       },
     },
     'lenia-mc2': {
@@ -1064,6 +1112,21 @@ void main() {
       if (!_pipeline) return null;
       const g = _pipeline.spec.growth;
       return g.type === 'glsl' ? g.glsl : null;
+    },
+
+    estimateDensity() {
+      if (!_ready || !_pipeline) return 0;
+      const S = 64;
+      const buf = new Float32Array(S * S * 4);
+      const gl = _gl;
+      const W = _pipeline.W, H = _pipeline.H;
+      const ox = (W - S) >> 1, oy = (H - S) >> 1;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, _pipeline._state._f[_pipeline._state._i]);
+      gl.readPixels(ox, oy, S, S, gl.RGBA, gl.FLOAT, buf);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      let sum = 0;
+      for (let i = 0; i < S * S; i++) sum += buf[i * 4];
+      return sum / (S * S);
     },
   };
 })();

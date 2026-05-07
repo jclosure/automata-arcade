@@ -2524,6 +2524,14 @@
     };
   }
 
+  // GPU world has Y-up (GL convention) — screen Y must be negated
+  function screenToGPUWorld(px, py) {
+    return {
+      x:  (px - canvas.width  / 2) / state.zoom + state.cameraX,
+      y: -(py - canvas.height / 2) / state.zoom + state.cameraY,
+    };
+  }
+
   function screenToGrid(px, py) {
     const w = screenToWorld(px, py);
     return {
@@ -2919,6 +2927,32 @@
       ASF.step();
       state.generation += 1;
       if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAutoGPU();
+      // Adaptive carrying-capacity control
+      if (state.gpuAdaptive && state.gpuAdaptive.enabled && state.generation % 45 === 0) {
+        const measured = ASF.estimateDensity();
+        const target = state.gpuAdaptive.target;
+        const str    = state.gpuAdaptive.strength;
+        const err    = measured - target;
+        const specId = ASF.getActiveSpecId();
+        if (specId === 'lenia' || specId === 'lenia-mc2') {
+          // Adjust mu: push toward target density via PI-like nudge on growth center
+          const mu = ASF.getParam('mu') || 0.135;
+          const newMu = Math.max(0.04, Math.min(0.45, mu + str * err));
+          ASF.setParam('mu', newMu);
+          const muEl = document.getElementById('asfMu');
+          const muOut = document.getElementById('asfMuOut');
+          if (muEl) { muEl.value = newMu; if (muOut) muOut.textContent = newMu.toFixed(4); }
+        } else if (specId === 'smoothlife') {
+          const dt = ASF.getParam('dt') || 0.05;
+          ASF.setParam('dt', Math.max(0.005, Math.min(0.2, dt - str * err * 0.5)));
+        }
+        // If density collapses entirely, reseed
+        if (measured < target * 0.12) {
+          ASF.randomize(target * 0.4);
+        }
+        const rdEl = document.getElementById('asfDensityReading');
+        if (rdEl) rdEl.textContent = `density: ${measured.toFixed(3)}`;
+      }
       return;
     }
     if (state.leniaMode) stepLenia();
@@ -3100,9 +3134,9 @@
     if (isGPUMode() && state.canvasMode === "paint") {
       if (ev.button === 0 || ev.button === 2) {
         const rect = canvas.getBoundingClientRect();
-        const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+        const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
         const value = ev.button === 2 ? 0.0 : 1.0;
-        ASF.paintAt(gxgy.x, gxgy.y, 4, value);
+        ASF.paintAt(wp.x, wp.y, 10, value);
         ev.preventDefault();
         return;
       }
@@ -3228,16 +3262,17 @@
 
     if (state.pointer.mode === "pan") {
       state.cameraX -= dx / state.zoom;
-      state.cameraY -= dy / state.zoom;
+      // GPU world is Y-up so pan direction flips
+      state.cameraY += (isGPUMode() ? 1 : -1) * dy / state.zoom;
       return;
     }
 
     // GPU drag-paint
     if (isGPUMode() && state.canvasMode === "paint" && state.pointer.down) {
       const rect = canvas.getBoundingClientRect();
-      const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
       const value = (ev.buttons & 2) ? 0.0 : 1.0;
-      ASF.paintAt(gxgy.x, gxgy.y, 4, value);
+      ASF.paintAt(wp.x, wp.y, 10, value);
       return;
     }
 
@@ -3308,11 +3343,15 @@
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
 
-    const before = screenToWorld(mx, my);
-    const zoomFactor = ev.deltaY < 0 ? 1.1 : 0.9;
-    state.zoom = Math.max(4, Math.min(60, state.zoom * zoomFactor));
-    const after = screenToWorld(mx, my);
-
+    const toWorld = isGPUMode() ? screenToGPUWorld : screenToWorld;
+    const before = toWorld(mx, my);
+    const zoomFactor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+    if (isGPUMode()) {
+      state.zoom = Math.max(0.15, Math.min(12, state.zoom * zoomFactor));
+    } else {
+      state.zoom = Math.max(4, Math.min(60, state.zoom * zoomFactor));
+    }
+    const after = toWorld(mx, my);
     state.cameraX += before.x - after.x;
     state.cameraY += before.y - after.y;
   }
@@ -3603,6 +3642,11 @@
           state.mode = "sandbox";
           modeSelect.value = "sandbox";
         } else {
+          // Center camera on GPU world with a fit-to-screen zoom
+          const [gW, gH] = ASF.getWorldSize();
+          state.cameraX = gW / 2;
+          state.cameraY = gH / 2;
+          state.zoom    = Math.min(canvas.width / gW, canvas.height / gH) * 0.88;
           asfPanelSetVisible(true);
           asfSyncPanel();
         }
@@ -5503,6 +5547,47 @@
         asfSyncPanel();
       });
     });
+
+    // Edge/structural highlight slider
+    const edgeEl  = document.getElementById("asfEdgeStr");
+    const edgeOut = document.getElementById("asfEdgeStrOut");
+    if (edgeEl) {
+      edgeEl.addEventListener("input", () => {
+        const v = Number(edgeEl.value);
+        if (edgeOut) edgeOut.textContent = v.toFixed(1);
+        ASF.setParam("edgeStr", v);
+      });
+    }
+
+    // Adaptive density controls
+    if (!state.gpuAdaptive) {
+      state.gpuAdaptive = { enabled: false, target: 0.15, strength: 0.008 };
+    }
+    const adaptCheck  = document.getElementById("asfAdaptiveEnabled");
+    const adaptTarget = document.getElementById("asfAdaptiveTarget");
+    const adaptStr    = document.getElementById("asfAdaptiveStr");
+    const adaptTOut   = document.getElementById("asfAdaptiveTargetOut");
+    const adaptSOut   = document.getElementById("asfAdaptiveStrOut");
+    if (adaptCheck) {
+      adaptCheck.checked = state.gpuAdaptive.enabled;
+      adaptCheck.addEventListener("change", () => {
+        state.gpuAdaptive.enabled = adaptCheck.checked;
+      });
+    }
+    if (adaptTarget) {
+      adaptTarget.value = state.gpuAdaptive.target;
+      adaptTarget.addEventListener("input", () => {
+        state.gpuAdaptive.target = Number(adaptTarget.value);
+        if (adaptTOut) adaptTOut.textContent = Number(adaptTarget.value).toFixed(2);
+      });
+    }
+    if (adaptStr) {
+      adaptStr.value = state.gpuAdaptive.strength;
+      adaptStr.addEventListener("input", () => {
+        state.gpuAdaptive.strength = Number(adaptStr.value);
+        if (adaptSOut) adaptSOut.textContent = Number(adaptStr.value).toFixed(4);
+      });
+    }
 
     // GLSL growth editor
     const glslCompileBtn = document.getElementById("asfGlslCompileBtn");

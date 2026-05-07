@@ -187,14 +187,45 @@
               <label class="asf-row">
                 <span>Colormap</span>
                 <select id="asfColormap" class="asf-select">
-                  <option value="ocean" selected>Ocean (default)</option>
-                  <option value="viridis">Viridis</option>
-                  <option value="plasma">Plasma</option>
-                  <option value="magma">Magma</option>
-                  <option value="twilight">Twilight</option>
-                  <option value="grayscale">Grayscale</option>
+                  <optgroup label="Classic">
+                    <option value="ocean" selected>Ocean</option>
+                    <option value="viridis">Viridis</option>
+                    <option value="plasma">Plasma</option>
+                    <option value="magma">Magma</option>
+                    <option value="twilight">Twilight</option>
+                    <option value="grayscale">Grayscale</option>
+                  </optgroup>
+                  <optgroup label="Biological">
+                    <option value="organelle">Organelle</option>
+                    <option value="neon">Neon Bioluminescent</option>
+                    <option value="lava">Lava / Infrared</option>
+                  </optgroup>
                 </select>
               </label>
+              <label class="asf-row">
+                <span title="Edge/membrane highlight strength">Edge</span>
+                <input id="asfEdgeStr" type="range" min="0" max="8" step="0.25" value="0" class="asf-slider" />
+                <span id="asfEdgeStrOut" class="asf-val">0.0</span>
+              </label>
+            </div>
+
+            <div class="asf-section">
+              <div class="asf-section-title">Adaptive Density</div>
+              <label class="asf-row">
+                <input type="checkbox" id="asfAdaptiveEnabled" />
+                <span>Auto-regulate</span>
+              </label>
+              <label class="asf-row">
+                <span title="Target average cell density">Target</span>
+                <input id="asfAdaptiveTarget" type="range" min="0.05" max="0.55" step="0.01" value="0.15" class="asf-slider" />
+                <span id="asfAdaptiveTargetOut" class="asf-val">0.15</span>
+              </label>
+              <label class="asf-row">
+                <span title="How aggressively to correct density">Strength</span>
+                <input id="asfAdaptiveStr" type="range" min="0.0005" max="0.03" step="0.0005" value="0.008" class="asf-slider" />
+                <span id="asfAdaptiveStrOut" class="asf-val">0.008</span>
+              </label>
+              <div id="asfDensityReading" class="asf-density-reading">density: —</div>
             </div>
 
             <div class="asf-section">

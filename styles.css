@@ -1658,3 +1658,12 @@ kbd {
   color: #aae0ff;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
+
+.asf-density-reading {
+  margin-top: 5px;
+  font-size: 0.70rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  text-align: right;
+  letter-spacing: 0.03em;
+}
