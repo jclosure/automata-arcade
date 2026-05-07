@@ -447,7 +447,14 @@ in vec2 vUV; out vec4 fragColor;
 ${cmapDecl}
 void main() {
   vec2 worldPos = (vUV * uCanvas - uCanvas * 0.5) / uZoom + uCamera;
-  vec2 uv = fract(worldPos / uWorld);
+  vec2 uv = worldPos / uWorld;
+
+  // Outside the world board — dark surround, no tiling
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+    fragColor = vec4(0.04, 0.08, 0.13, 1.0);
+    return;
+  }
+
   vec2 tx = 1.0 / uWorld;
   vec4 state = texture(uState, uv);
   vec4 paint  = texture(uPaint, uv);
@@ -455,6 +462,13 @@ void main() {
   r0 = r0 * (1.0 - paint.g);
   state = vec4(clamp(r0, 0.0, 1.0), state.g, state.b, state.a);
   ${colorBodyGlsl}
+
+  // Subtle board border (1.5-texel wide line)
+  vec2 borderDist = min(uv, 1.0 - uv) * uWorld;
+  if (borderDist.x < 1.5 || borderDist.y < 1.5) {
+    fragColor.rgb = mix(fragColor.rgb, vec3(0.28, 0.48, 0.68), 0.55);
+  }
+
   if (uEdgeStr > 0.001) {
     float gx = texture(uState, uv + vec2(tx.x, 0.0)).r - texture(uState, uv - vec2(tx.x, 0.0)).r;
     float gy = texture(uState, uv + vec2(0.0, tx.y)).r - texture(uState, uv - vec2(0.0, tx.y)).r;
@@ -476,8 +490,7 @@ in vec2 vUV;
 out vec4 fragPaint;
 void main() {
   vec2 px = vUV * uWorld;
-  vec2 d = abs(px - uBrushPt);
-  d = min(d, uWorld - d);
+  vec2 d = px - uBrushPt;
   float dist = length(d);
   float s = max(0.0, 1.0 - dist / max(uBrushR, 0.5));
   s = s * s;

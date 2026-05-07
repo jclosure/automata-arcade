@@ -3135,8 +3135,11 @@
       if (ev.button === 0 || ev.button === 2) {
         const rect = canvas.getBoundingClientRect();
         const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-        const value = ev.button === 2 ? 0.0 : 1.0;
-        ASF.paintAt(wp.x, wp.y, 10, value);
+        const [gW, gH] = ASF.getWorldSize();
+        if (wp.x >= 0 && wp.x < gW && wp.y >= 0 && wp.y < gH) {
+          const value = ev.button === 2 ? 0.0 : 1.0;
+          ASF.paintAt(wp.x, wp.y, 10, value);
+        }
         ev.preventDefault();
         return;
       }
@@ -3271,8 +3274,11 @@
     if (isGPUMode() && state.canvasMode === "paint" && state.pointer.down) {
       const rect = canvas.getBoundingClientRect();
       const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-      const value = (ev.buttons & 2) ? 0.0 : 1.0;
-      ASF.paintAt(wp.x, wp.y, 10, value);
+      const [gW, gH] = ASF.getWorldSize();
+      if (wp.x >= 0 && wp.x < gW && wp.y >= 0 && wp.y < gH) {
+        const value = (ev.buttons & 2) ? 0.0 : 1.0;
+        ASF.paintAt(wp.x, wp.y, 10, value);
+      }
       return;
     }
 
