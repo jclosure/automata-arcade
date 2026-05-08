@@ -88,6 +88,7 @@
           <input id="paletteSearch" class="palette-search" type="search" placeholder="Filter patterns…" autocomplete="off" />
           <div id="paletteList" class="palette-list"></div>
         </aside>
+        <div class="resize-handle" id="paletteResizer"></div>
 
         <section class="board-wrap">
           <canvas id="lifeCanvas"></canvas>
@@ -125,6 +126,7 @@
             <button id="guideHintBtn" class="guide-hint-btn">Hint</button>
           </div>
         </section>
+        <div class="resize-handle" id="inspectorResizer"></div>
 
         <aside class="panel inspector" id="inspectorPanel">
           <h2>Inspector</h2>
@@ -577,30 +579,31 @@
           <hr />
           <h3>Rule Zones</h3>
           <div id="zoneLab">
-            <label class="rl-check">
-              <input type="checkbox" id="zoneEnabled" /> Enable zone split
-            </label>
-            <label class="rl-row">
-              <span>Axis</span>
-              <select id="zoneAxis" class="rl-select">
-                <option value="x">Vertical (X)</option>
-                <option value="y">Horizontal (Y)</option>
-              </select>
-            </label>
-            <label class="rl-row">
-              <span>Offset</span>
-              <input id="zoneOffset" class="rl-radius" type="range" min="-200" max="200" step="1" value="0" />
-              <span id="zoneOffsetOut">0</span>
-            </label>
-            <label class="rl-row">
-              <span>Zone 2</span>
-              <input id="zoneRule2" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
-            </label>
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+              <button id="zoneDrawBtn" class="rl-type-btn" style="flex:1">Draw Zone</button>
+              <button id="zoneDelSelBtn" class="rl-type-btn" title="Delete selected zone">✕ Del</button>
+              <button id="zoneClearBtn" class="rl-type-btn" title="Remove all zones">Clear</button>
+            </div>
+            <div style="font-size:10px;color:#678;margin-bottom:6px;line-height:1.5">
+              Draw a rectangle on the canvas.<br>
+              Click a zone to select · drag to move · drag handles to resize.
+            </div>
+            <div id="zoneList"></div>
           </div>
           <hr />
           <h3>Force Fields</h3>
           <div id="fieldLab">
-            <button id="forcePaintToggle" class="rl-type-btn" style="width:100%;margin-bottom:4px;">Force Paint <kbd>V</kbd></button>
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+              <button id="forcePaintToggle" class="rl-type-btn" style="flex:1">Draw Field  ⊛</button>
+              <button id="forceClearBtn" class="rl-type-btn" title="Remove all fields">Clear</button>
+            </div>
+            <div style="font-size:10px;color:#678;margin-bottom:6px;line-height:1.5">
+              Click+drag on canvas to draw a field.<br>
+              Click a field to select · drag to move · drag edge to resize.
+            </div>
+            <div id="ffList"></div>
+            <div class="rl-sep"></div>
+            <div style="font-size:10px;color:#678;margin-bottom:4px">New field defaults</div>
             <div class="rl-type-row">
               <button id="forceAttractBtn" class="rl-type-btn rl-type-active">Attract</button>
               <button id="forceRepelBtn" class="rl-type-btn">Repel</button>
@@ -612,10 +615,17 @@
             </label>
             <label class="rl-row">
               <span>Strength</span>
-              <input id="forceStrength" class="rl-radius" type="range" min="1" max="8" step="1" value="3" />
+              <input id="forceStrength" class="rl-radius" type="range" min="1" max="10" step="1" value="3" />
               <span id="forceStrengthOut">3</span>
             </label>
-            <button id="forceClearBtn" class="rl-apply" style="width:100%;margin-top:2px;">Clear fields</button>
+            <label class="rl-row">
+              <span>Falloff</span>
+              <select id="forceFalloff" class="rl-select">
+                <option value="linear">Linear</option>
+                <option value="bell">Bell</option>
+                <option value="step">Step</option>
+              </select>
+            </label>
             <div class="rl-sep"></div>
             <label class="rl-check">
               <input type="checkbox" id="densityFeedback" /> Density feedback
