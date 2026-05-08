@@ -411,6 +411,7 @@ ${potDecls}
 uniform float uMu, uSigma, uDt;
 uniform float uDa, uDb, uF, uK;
 uniform float uB1, uB2, uD1, uD2, uSigmaN, uSigmaM;
+uniform float uFracCR, uFracCI;
 in vec2 vUV;
 out vec4 fragNext;
 ${GROWTH_HELPERS}
@@ -443,38 +444,62 @@ uniform sampler2D uPaint;
 uniform vec2 uCanvas, uWorld, uCamera;
 uniform float uZoom;
 uniform float uEdgeStr;
+uniform float uFracCR, uFracCI;
 in vec2 vUV; out vec4 fragColor;
 ${cmapDecl}
+
+// ── Catmull-Rom bicubic — sharp, smooth upscaling with no bilinear smear ──
+vec4 _crW(float t) {
+  float t2 = t*t, t3 = t2*t;
+  return 0.5 * vec4(-t3+2.0*t2-t, 3.0*t3-5.0*t2+2.0, -3.0*t3+4.0*t2+t, t3-t2);
+}
+vec4 sampleBicubic(sampler2D tex, vec2 uv) {
+  vec2 px = uv * uWorld - 0.5;
+  vec2 f  = fract(px);
+  vec2 b  = floor(px);
+  vec4 wx = _crW(f.x), wy = _crW(f.y);
+  vec4 c  = vec4(0.0);
+  for (int j = 0; j < 4; j++)
+    for (int i = 0; i < 4; i++)
+      c += wx[i] * wy[j] *
+           texture(tex, fract((b + vec2(float(i)-1.0, float(j)-1.0) + 0.5) / uWorld));
+  return c;
+}
+
 void main() {
   vec2 worldPos = (vUV * uCanvas - uCanvas * 0.5) / uZoom + uCamera;
-  vec2 uv = worldPos / uWorld;
+  vec2 uv = fract(worldPos / uWorld);
 
-  // Outside the world board — dark surround, no tiling
-  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-    fragColor = vec4(0.04, 0.08, 0.13, 1.0);
-    return;
-  }
-
-  vec2 tx = 1.0 / uWorld;
-  vec4 state = texture(uState, uv);
+  // Bicubic state (artifact-free upscale) + bilinear paint overlay
+  vec4 state = clamp(sampleBicubic(uState, uv), 0.0, 1.0);
   vec4 paint  = texture(uPaint, uv);
   float r0 = state.r + paint.r * (1.0 - state.r);
   r0 = r0 * (1.0 - paint.g);
   state = vec4(clamp(r0, 0.0, 1.0), state.g, state.b, state.a);
   ${colorBodyGlsl}
 
-  // Subtle board border (1.5-texel wide line)
-  vec2 borderDist = min(uv, 1.0 - uv) * uWorld;
-  if (borderDist.x < 1.5 || borderDist.y < 1.5) {
-    fragColor.rgb = mix(fragColor.rgb, vec3(0.28, 0.48, 0.68), 0.55);
+  // Gradient via 2-texel bilinear taps — cheap and sufficient for normals
+  vec2 tx = 2.0 / uWorld;
+  float gx = texture(uState, fract(uv + vec2(tx.x, 0.0))).r
+           - texture(uState, fract(uv - vec2(tx.x, 0.0))).r;
+  float gy = texture(uState, fract(uv + vec2(0.0, tx.y))).r
+           - texture(uState, fract(uv - vec2(0.0, tx.y))).r;
+
+  // Surface normal from state gradient → 3D depth on every organism
+  vec3 nrm    = normalize(vec3(gx, gy, 0.28));
+  vec3 litDir = normalize(vec3(0.55, 0.85, 1.8));
+  float diff  = max(0.0, dot(nrm, litDir));
+  float spec  = pow(max(0.0, dot(reflect(-litDir, nrm), vec3(0.0, 0.0, 1.0))), 30.0);
+  fragColor.rgb = fragColor.rgb * (0.42 + 0.68 * diff)
+                + vec3(0.88, 0.94, 1.0) * spec * 0.38;
+
+  // Edge / membrane highlight — reuses computed gradient, zero extra samples
+  if (uEdgeStr > 0.001) {
+    float edge = length(vec2(gx, gy)) * uEdgeStr;
+    fragColor.rgb += vec3(0.45, 0.75, 1.0) * edge;
   }
 
-  if (uEdgeStr > 0.001) {
-    float gx = texture(uState, uv + vec2(tx.x, 0.0)).r - texture(uState, uv - vec2(tx.x, 0.0)).r;
-    float gy = texture(uState, uv + vec2(0.0, tx.y)).r - texture(uState, uv - vec2(0.0, tx.y)).r;
-    float edge = length(vec2(gx, gy)) * uEdgeStr;
-    fragColor.rgb = clamp(fragColor.rgb + vec3(0.45, 0.75, 1.0) * edge, 0.0, 1.0);
-  }
+  fragColor = clamp(fragColor, 0.0, 1.0);
 }`;
   }
 
@@ -545,6 +570,9 @@ void main() {
       this.sigmaM = (spec.growth.params && spec.growth.params.sigmaM) || 0.147;
       // Display params (hot-updatable)
       this.edgeStr = 0.0;
+      // Fractal substrate params (for fractal-lenia)
+      this.fracCR = (spec.fractal && spec.fractal.cr) != null ? spec.fractal.cr : -0.7269;
+      this.fracCI = (spec.fractal && spec.fractal.ci) != null ? spec.fractal.ci : 0.1889;
       // Paint buffer
       this._paintTex  = this._makePaintTex();
       this._paintFBO  = this._makePaintFBO(this._paintTex);
@@ -604,51 +632,56 @@ void main() {
     step() {
       const gl = this.gl;
       gl.viewport(0, 0, this.W, this.H);
+      const substeps = this.spec.substeps || 1;
 
-      // Merge pending paint into state before simulation
+      // Merge pending paint once before all substeps
       if (this._hasPaint) {
         this._mergePaint();
         this._clearPaint();
         this._hasPaint = false;
       }
 
-      // ── Kernel passes ──
-      for (let i = 0; i < this._kProgs.length; i++) {
-        const prog = this._kProgs[i];
-        const pot = this._pots[i];
-        const kernel = this.spec.kernels[i];
-        gl.bindFramebuffer(gl.FRAMEBUFFER, pot.fbo);
-        drawFullscreen(gl, prog, this._quad, (p) => {
+      for (let sub = 0; sub < substeps; sub++) {
+        // ── Kernel passes ──
+        for (let i = 0; i < this._kProgs.length; i++) {
+          const prog = this._kProgs[i];
+          const pot = this._pots[i];
+          const kernel = this.spec.kernels[i];
+          gl.bindFramebuffer(gl.FRAMEBUFFER, pot.fbo);
+          drawFullscreen(gl, prog, this._quad, (p) => {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this._state.readTex);
+            setUniforms(gl, p, {
+              uState: 0,
+              uRes: [this.W, this.H],
+              uInner: (kernel.innerFrac || 0.0),
+              uAlpha: (kernel.alpha || 4.0),
+            });
+          });
+        }
+
+        // ── Growth + integrate pass ──
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._state.writeFBO);
+        drawFullscreen(gl, this._gProg, this._quad, (p) => {
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, this._state.readTex);
+          for (let i = 0; i < this._pots.length; i++) {
+            gl.activeTexture(gl.TEXTURE1 + i);
+            gl.bindTexture(gl.TEXTURE_2D, this._pots[i].tex);
+            gl.uniform1i(ul(gl, p, `uPot${i}`), 1 + i);
+          }
           setUniforms(gl, p, {
             uState: 0,
-            uRes: [this.W, this.H],
-            uInner: (kernel.innerFrac || 0.0),
-            uAlpha: (kernel.alpha || 4.0),
+            uMu: this.mu, uSigma: this.sigma, uDt: this.dt,
+            uDa: this.Da, uDb: this.Db, uF: this.F, uK: this.K,
+            uB1: this.b1, uB2: this.b2, uD1: this.d1, uD2: this.d2,
+            uSigmaN: this.sigmaN, uSigmaM: this.sigmaM,
+            uFracCR: this.fracCR, uFracCI: this.fracCI,
           });
         });
+        this._state.swap();
       }
 
-      // ── Growth + integrate pass ──
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._state.writeFBO);
-      drawFullscreen(gl, this._gProg, this._quad, (p) => {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this._state.readTex);
-        for (let i = 0; i < this._pots.length; i++) {
-          gl.activeTexture(gl.TEXTURE1 + i);
-          gl.bindTexture(gl.TEXTURE_2D, this._pots[i].tex);
-          gl.uniform1i(ul(gl, p, `uPot${i}`), 1 + i);
-        }
-        setUniforms(gl, p, {
-          uState: 0,
-          uMu: this.mu, uSigma: this.sigma, uDt: this.dt,
-          uDa: this.Da, uDb: this.Db, uF: this.F, uK: this.K,
-          uB1: this.b1, uB2: this.b2, uD1: this.d1, uD2: this.d2,
-          uSigmaN: this.sigmaN, uSigmaM: this.sigmaM,
-        });
-      });
-      this._state.swap();
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
@@ -673,6 +706,8 @@ void main() {
           uCamera:  [cameraX, cameraY],
           uZoom:    zoom,
           uEdgeStr: this.edgeStr,
+          uFracCR:  this.fracCR,
+          uFracCI:  this.fracCI,
         });
       });
       ctx.drawImage(this.gpuCanvas, 0, 0);
@@ -689,6 +724,9 @@ void main() {
     paintAt(wx, wy, radius, value) {
       const gl = this.gl;
       const brushV = value > 0.5 ? 1.0 : -1.0;
+      // Toroidal wrap so brush at edge paints the correct world cell
+      const px = ((wx % this.W) + this.W) % this.W;
+      const py = ((wy % this.H) + this.H) % this.H;
       gl.viewport(0, 0, this.W, this.H);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this._paintFBO);
       gl.enable(gl.BLEND);
@@ -696,7 +734,7 @@ void main() {
       gl.blendFunc(gl.ONE, gl.ONE);
       drawFullscreen(gl, this._paintProg, this._quad, (p) => {
         setUniforms(gl, p, {
-          uBrushPt: [wx, wy],
+          uBrushPt: [px, py],
           uBrushR:  radius,
           uBrushV:  brushV,
           uWorld:   [this.W, this.H],
@@ -729,6 +767,7 @@ void main() {
       growth: { type: 'lenia-bell', params: { mu: 0.135, sigma: 0.015 } },
       integration: { method: 'euler', dt: 0.1 },
       display: { colormap: 'ocean' },
+      simScale: 3,
     },
     smoothlife: {
       id: 'smoothlife', name: 'SmoothLife', category: 'continuous',
@@ -740,6 +779,7 @@ void main() {
       growth: { type: 'smoothlife', params: { b1: 0.278, b2: 0.365, d1: 0.267, d2: 0.445, sigmaN: 0.028, sigmaM: 0.147 } },
       integration: { method: 'euler', dt: 0.05 },
       display: { colormap: 'viridis' },
+      simScale: 3,
     },
     'gray-scott': {
       id: 'gray-scott', name: 'Gray-Scott', category: 'reaction-diffusion',
@@ -750,6 +790,7 @@ void main() {
       ],
       growth: { type: 'gray-scott', params: { Da: 0.2097, Db: 0.1050, F: 0.0545, K: 0.0620 } },
       integration: { method: 'euler', dt: 1.0 },
+      substeps: 12,
       display: {
         colormap: 'custom',
         glsl: `
@@ -791,6 +832,73 @@ void main() {
           vec3 col = vec3(A * 0.357 + B * 0.10, A * 0.439 + B * 0.05, B * 0.737 + A * 0.2);
           fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);`,
       },
+      simScale: 3,
+    },
+    'fractal-lenia': {
+      id: 'fractal-lenia', name: 'Fractal Lenia', category: 'fractal',
+      world: { width: 512, height: 512, channels: 1, boundary: 'torus' },
+      kernels: [{ type: 'ring', radius: 13, fromChannel: 0, innerFrac: 0.0, alpha: 4.0 }],
+      growth: {
+        type: 'glsl',
+        // Julia field modulates mu — organisms colonise the fractal boundary
+        glsl: `
+          vec2 fc = vUV * 4.0 - vec2(2.0);
+          vec2 fz = fc;
+          float fIter = 0.0;
+          for (int fi = 0; fi < 64; fi++) {
+            fz = vec2(fz.x*fz.x - fz.y*fz.y + uFracCR,  2.0*fz.x*fz.y + uFracCI);
+            if (dot(fz, fz) > 4.0) break;
+            fIter += 1.0;
+          }
+          float fField  = fIter / 64.0;
+          // Habitat band peaks at fField=0.85 (Julia boundary), dies inside & outside
+          float mu_eff  = uMu + abs(fField - 0.85) * 0.28;
+          float g = leniaBell(pot.r, mu_eff, uSigma);
+          fragNext = vec4(clamp(state.r + uDt * g, 0.0, 1.0), 0.0, 0.0, 0.0);
+        `,
+      },
+      integration: { method: 'euler', dt: 0.1 },
+      display: {
+        colormap: 'custom',
+        // Fractal background + bioluminescent organisms
+        glsl: `
+          vec2 fc2 = uv * 4.0 - vec2(2.0);
+          vec2 fz2 = fc2;
+          float fI2 = 0.0;
+          float mO = 1e5, mR = 1e5, mI = 1e5;
+          for (int fi2 = 0; fi2 < 48; fi2++) {
+            fz2 = vec2(fz2.x*fz2.x - fz2.y*fz2.y + uFracCR,  2.0*fz2.x*fz2.y + uFracCI);
+            if (dot(fz2, fz2) > 4.0) break;
+            fI2  += 1.0;
+            mO    = min(mO, length(fz2));
+            mR    = min(mR, abs(fz2.x));
+            mI    = min(mI, abs(fz2.y));
+          }
+          float ff2 = fI2 / 48.0;
+          // Smooth escape coloring for background
+          float logfz = log(max(dot(fz2, fz2), 1.001)) * 0.5;
+          float fnu   = (ff2 < 1.0 && logfz > 0.01)
+                        ? log(logfz / 0.6931472) / 0.6931472 : 0.0;
+          float fsn   = fI2 + 1.0 - fnu;
+          float ft    = fract(fsn * 0.07);
+          // Deep-space fractal palette: near-black teal/indigo
+          vec3 fracBg = (ff2 >= 1.0)
+            ? vec3(0.0, 0.0, 0.02)
+            : vec3(0.04, 0.07, 0.18) + vec3(0.03, 0.05, 0.12) * ft * 2.5;
+          // Subtle orbit-trap shimmer on boundary
+          float boundary = clamp(1.0 - abs(ff2 - 0.85) * 8.0, 0.0, 1.0);
+          vec3 glimmer  = vec3(0.0, 0.18, 0.35) * boundary * 0.4;
+          fracBg += glimmer;
+          // Organism: bioluminescent teal → warm gold core
+          float A = state.r;
+          vec3 bioCol = vec3(0.05, 0.92, 0.52) * pow(A, 0.45)
+                      + vec3(0.92, 0.62, 0.08) * pow(A, 2.8);
+          float orgMask = smoothstep(0.0, 0.12, A);
+          fragColor = vec4(mix(fracBg, fracBg * 0.4 + bioCol, orgMask), 1.0);
+        `,
+      },
+      fractal: { cr: -0.7269, ci: 0.1889 },
+      simScale: 3,
     },
   };
 
@@ -846,21 +954,100 @@ void main() {
     return data;
   }
 
-  function grayScottSeed(W, H) {
-    // A = 1, B = 0; small central patch with B = 0.25 + noise
+  // Place N ring-shaped seeds that match the orbium profile the Lenia kernel was designed for.
+  // Pure pixel scatter dies in <10 steps (average potential ≈ 0.06, bell at mu=0.135).
+  function leniaNoiseSeed(W, H) {
     const data = new Float32Array(W * H * 4);
-    const cx = W/2|0, cy = H/2|0, R = 20;
-    for (let i = 0; i < W * H; i++) {
-      data[i * 4] = 1.0; // A channel = 1 everywhere
+    const n = Math.max(20, Math.round(W * H / 10000));
+    for (let i = 0; i < n; i++) {
+      const cx = (Math.random() * W) | 0;
+      const cy = (Math.random() * H) | 0;
+      const OR = 7 + ((Math.random() * 5) | 0);  // outer radius 7-11
+      const IR = 2 + ((Math.random() * 3) | 0);  // inner radius 2-4
+      const amp = 0.6 + Math.random() * 0.3;
+      for (let dy = -OR; dy <= OR; dy++) {
+        for (let dx = -OR; dx <= OR; dx++) {
+          const r = Math.sqrt(dx*dx + dy*dy);
+          if (r < IR || r > OR) continue;
+          const v  = amp * Math.sin(Math.PI * (r - IR) / (OR - IR)) * (0.8 + Math.random() * 0.2);
+          const x  = ((cx + dx) % W + W) % W;
+          const y  = ((cy + dy) % H + H) % H;
+          data[(y * W + x) * 4] = Math.min(1, data[(y * W + x) * 4] + v);
+        }
+      }
     }
-    for (let dy = -R; dy <= R; dy++) {
-      for (let dx = -R; dx <= R; dx++) {
-        if (dx*dx + dy*dy > R*R) continue;
-        const x = ((cx + dx) % W + W) % W;
-        const y = ((cy + dy) % H + H) % H;
-        const idx = (y * W + x) * 4;
-        data[idx]     = 0.5 + (Math.random() - 0.5) * 0.02;  // A
-        data[idx + 1] = 0.25 + (Math.random() - 0.5) * 0.02; // B
+    return data;
+  }
+
+  // Two-channel ring seeds — alternates species so both start populated.
+  function leniaMC2Seed(W, H) {
+    const data = new Float32Array(W * H * 4);
+    const n = Math.max(30, Math.round(W * H / 8000));
+    for (let i = 0; i < n; i++) {
+      const cx  = (Math.random() * W) | 0;
+      const cy  = (Math.random() * H) | 0;
+      const ch  = i % 2;
+      const OR  = 7 + ((Math.random() * 9) | 0);  // 7-15 (kernel 1 has radius 21)
+      const IR  = 2 + ((Math.random() * 4) | 0);
+      const amp = 0.6 + Math.random() * 0.3;
+      for (let dy = -OR; dy <= OR; dy++) {
+        for (let dx = -OR; dx <= OR; dx++) {
+          const r = Math.sqrt(dx*dx + dy*dy);
+          if (r < IR || r > OR) continue;
+          const v = amp * Math.sin(Math.PI * (r - IR) / (OR - IR)) * (0.8 + Math.random() * 0.2);
+          const x = ((cx + dx) % W + W) % W;
+          const y = ((cy + dy) % H + H) % H;
+          data[(y * W + x) * 4 + ch] = Math.min(1, data[(y * W + x) * 4 + ch] + v);
+        }
+      }
+    }
+    return data;
+  }
+
+  // Dense disk blobs for SmoothLife — ring kernel edges land in the survival band [0.28, 0.68].
+  function smoothlifeBlobSeed(W, H) {
+    const data = new Float32Array(W * H * 4);
+    const n = Math.max(20, Math.round(W * H / 5000));
+    for (let i = 0; i < n; i++) {
+      const cx  = (Math.random() * W) | 0;
+      const cy  = (Math.random() * H) | 0;
+      const R   = 12 + Math.random() * 20;
+      const amp = 0.65 + Math.random() * 0.3;
+      const ri  = Math.ceil(R);
+      for (let dy = -ri; dy <= ri; dy++) {
+        for (let dx = -ri; dx <= ri; dx++) {
+          if (dx*dx + dy*dy > R*R) continue;
+          const x = ((cx + dx) % W + W) % W;
+          const y = ((cy + dy) % H + H) % H;
+          data[(y * W + x) * 4] = Math.min(1, amp * (0.85 + Math.random() * 0.15));
+        }
+      }
+    }
+    return data;
+  }
+
+  function grayScottSeed(W, H) {
+    const data = new Float32Array(W * H * 4);
+    // A = 1 everywhere; sparse random B noise to break symmetry at boundaries
+    for (let i = 0; i < W * H; i++) {
+      data[i * 4]     = 1.0;
+      data[i * 4 + 1] = Math.random() < 0.008 ? Math.random() * 0.04 : 0;
+    }
+    // Dense seed patches scaled to viewport — ~25–35% area coverage
+    const patches = Math.max(25, Math.round(W * H / 12000));
+    const R       = Math.max(25, Math.floor(Math.min(W, H) / 18));
+    for (let p = 0; p < patches; p++) {
+      const cx = Math.floor(Math.random() * W);
+      const cy = Math.floor(Math.random() * H);
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          if (dx*dx + dy*dy > R*R) continue;
+          const x   = ((cx + dx) % W + W) % W;
+          const y   = ((cy + dy) % H + H) % H;
+          const idx = (y * W + x) * 4;
+          data[idx]     = 0.5  + (Math.random() - 0.5) * 0.05;
+          data[idx + 1] = 0.25 + (Math.random() - 0.5) * 0.05;
+        }
       }
     }
     return data;
@@ -879,18 +1066,24 @@ void main() {
     },
     {
       id: 'scatter', name: 'Random Scatter', specId: 'lenia',
-      desc: 'Sparse random initialization. Self-organizes into multiple organisms.',
-      seed: (W, H) => scatterSeed(W, H, 0.12),
+      desc: 'Ring-blob initialization. Self-organizes into multiple organisms.',
+      seed: leniaNoiseSeed,
     },
     {
       id: 'scatter-dense', name: 'Dense Field', specId: 'lenia',
-      desc: 'Dense random initialization. Produces a complex turbulent ecosystem.',
-      seed: (W, H) => scatterSeed(W, H, 0.4),
+      desc: 'Dense ring-blob field. Produces a complex turbulent ecosystem.',
+      seed: (W, H) => {
+        const d = leniaNoiseSeed(W, H);
+        // second pass — double the blobs for a denser ecosystem
+        const extra = leniaNoiseSeed(W, H);
+        for (let i = 0; i < W * H; i++) d[i * 4] = Math.min(1, d[i * 4] + extra[i * 4]);
+        return d;
+      },
     },
     {
       id: 'smooth-scatter', name: 'SmoothLife Scatter', specId: 'smoothlife',
-      desc: 'Random seed for SmoothLife. Self-organizes into continuous gliders.',
-      seed: (W, H) => scatterSeed(W, H, 0.45, 0.3, 0.7),
+      desc: 'Blob-based seed for SmoothLife. Blob edges land in the survival band.',
+      seed: smoothlifeBlobSeed,
     },
     {
       id: 'gs-coral', name: 'Gray-Scott: Coral', specId: 'gray-scott',
@@ -912,15 +1105,8 @@ void main() {
     },
     {
       id: 'lenia2-scatter', name: 'Lenia 2-species', specId: 'lenia-mc2',
-      desc: 'Two coupled Lenia fields. Watch cross-species dynamics emerge.',
-      seed: (W, H) => {
-        const data = new Float32Array(W * H * 4);
-        for (let i = 0; i < W * H; i++) {
-          if (Math.random() < 0.12) data[i * 4] = Math.random() * 0.9;
-          if (Math.random() < 0.10) data[i * 4 + 1] = Math.random() * 0.9;
-        }
-        return data;
-      },
+      desc: 'Two coupled Lenia fields. Ring seeds alternate between species.',
+      seed: leniaMC2Seed,
     },
   ];
 
@@ -931,8 +1117,11 @@ void main() {
   let _gl = null;
   let _activeSpecId = null;
   let _ready = false;
+  let _canvasW = 0;
+  let _canvasH = 0;
+  let _userSimScale = null; // null = use spec default
 
-  function activateSpec(specId, creatureId) {
+  function activateSpec(specId, creatureId, canvasW, canvasH) {
     const spec = SPECS[specId];
     if (!spec) { console.error('[ASF] Unknown spec:', specId); return false; }
 
@@ -955,6 +1144,18 @@ void main() {
       if (creature && creature.specOverrides) {
         finalSpec = deepMerge(spec, creature.specOverrides);
       }
+    }
+
+    // Compute world size from raw canvas dims ÷ effective simScale
+    if (canvasW && canvasH) {
+      _canvasW = canvasW;
+      _canvasH = canvasH;
+      const scale = _userSimScale ?? finalSpec.simScale ?? 1;
+      const W = Math.max(1, Math.round(canvasW / scale));
+      const H = Math.max(1, Math.round(canvasH / scale));
+      finalSpec = Object.assign({}, finalSpec, {
+        world: Object.assign({}, finalSpec.world, { width: W, height: H }),
+      });
     }
 
     try {
@@ -998,8 +1199,8 @@ void main() {
 
     isGPUMode(mode) { return mode in SPECS; },
 
-    activate(specId, creatureId) {
-      return activateSpec(specId, creatureId);
+    activate(specId, creatureId, W, H) {
+      return activateSpec(specId, creatureId, W, H);
     },
 
     deactivate() {
@@ -1022,22 +1223,59 @@ void main() {
 
     randomize(density) {
       if (!_ready || !_pipeline) return;
-      const spec = SPECS[_activeSpecId];
-      if (!spec) return;
-      const { width: W, height: H } = spec.world;
-      if (_activeSpecId === 'gray-scott') {
-        _pipeline.upload(grayScottSeed(W, H));
-      } else {
-        _pipeline.upload(scatterSeed(W, H, density || 0.15));
+      const W = _pipeline.W, H = _pipeline.H;
+      switch (_activeSpecId) {
+        case 'gray-scott':    _pipeline.upload(grayScottSeed(W, H));       break;
+        case 'lenia':         _pipeline.upload(leniaNoiseSeed(W, H));      break;
+        case 'smoothlife':    _pipeline.upload(smoothlifeBlobSeed(W, H));  break;
+        case 'lenia-mc2':     _pipeline.upload(leniaMC2Seed(W, H));        break;
+        case 'fractal-lenia': _pipeline.upload(leniaNoiseSeed(W, H));      break;
+        default:              _pipeline.upload(scatterSeed(W, H, density || 0.15)); break;
       }
+    },
+
+    // Additively blend fresh seeds into the live state — existing organisms are preserved.
+    // Used by adaptive control so reseeds never flash or erase running creatures.
+    injectLife() {
+      if (!_ready || !_pipeline) return;
+      const W = _pipeline.W, H = _pipeline.H;
+      let fresh;
+      switch (_activeSpecId) {
+        case 'lenia':         fresh = leniaNoiseSeed(W, H);      break;
+        case 'lenia-mc2':     fresh = leniaMC2Seed(W, H);        break;
+        case 'smoothlife':    fresh = smoothlifeBlobSeed(W, H);  break;
+        case 'fractal-lenia': fresh = leniaNoiseSeed(W, H);      break;
+        default: return; // gray-scott handled separately
+      }
+      const current = _pipeline.readPixels();
+      const ch = _activeSpecId === 'lenia-mc2' ? 2 : 1;
+      for (let i = 0; i < W * H; i++) {
+        for (let c = 0; c < ch; c++) {
+          const idx = i * 4 + c;
+          current[idx] = Math.max(current[idx], fresh[idx]);
+        }
+      }
+      _pipeline.upload(current);
+    },
+
+    clear() {
+      if (!_ready || !_pipeline) return;
+      const W = _pipeline.W, H = _pipeline.H;
+      const data = new Float32Array(W * H * 4);
+      if (_activeSpecId === 'gray-scott') {
+        // Resting state for GS: A=1 everywhere, B=0
+        for (let i = 0; i < W * H; i++) data[i * 4] = 1.0;
+      }
+      // For all others: all-zero = empty world
+      _pipeline.upload(data);
+      _pipeline._clearPaint();
     },
 
     spawnCreature(creatureId, wx, wy) {
       if (!_ready || !_pipeline) return;
       const creature = CREATURES.find(c => c.id === creatureId);
       if (!creature || creature.specId !== _activeSpecId) return;
-      const spec = SPECS[_activeSpecId];
-      const { width: W, height: H } = spec.world;
+      const W = _pipeline.W, H = _pipeline.H;
       // seedData is always generated centered at (W/2, H/2)
       const seedData = creature.seed(W, H);
       const current = _pipeline.readPixels();
@@ -1069,6 +1307,22 @@ void main() {
     getWorldSize() {
       if (!_pipeline) return [512, 512];
       return [_pipeline.W, _pipeline.H];
+    },
+
+    getSimScale(specId) {
+      const id = specId || _activeSpecId;
+      return _userSimScale ?? (id && SPECS[id]?.simScale) ?? 1;
+    },
+
+    setSimScale(n) {
+      _userSimScale = (n && n > 0) ? n : null;
+      if (_activeSpecId && _canvasW && _canvasH) {
+        activateSpec(_activeSpecId, null, _canvasW, _canvasH);
+      }
+    },
+
+    setFractalC(cr, ci) {
+      if (_pipeline) { _pipeline.fracCR = cr; _pipeline.fracCI = ci; }
     },
 
     getActiveSpecId() { return _activeSpecId; },

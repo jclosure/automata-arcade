@@ -38,7 +38,7 @@
   const kernelRadiusOut = document.getElementById("kernelRadiusOut");
 
   const state = {
-    sharedState: true,
+    sharedState: false,
     alive: new Set(), // shared game state (all modes)
     // per-mode alive sets used when sharedState is false
     modeAlive: {
@@ -1394,8 +1394,9 @@
   };
 
   const MANIFOLD_MODES = ["sphere", "torus", "klein", "mobius", "cylinder"];
-  function is3DMode()  { return MANIFOLD_MODES.includes(state.mode); }
-  function isGPUMode() { return window.ASF && ASF.isGPUMode(state.mode); }
+  function is3DMode()     { return MANIFOLD_MODES.includes(state.mode); }
+  function isGPUMode()    { return window.ASF && ASF.isGPUMode(state.mode); }
+  function isFractalMode(){ return state.mode === 'fractal'; }
 
   // 3D modes use torus wrapping for their topology; flat sandbox/arcade fall back to flat (infinite).
   function activeSurface() {
@@ -2844,6 +2845,10 @@
   }
 
   function draw() {
+    if (isFractalMode()) {
+      if (window.FractalEngine) FractalEngine.render(ctx, canvas.width, canvas.height);
+      return;
+    }
     if (isGPUMode()) {
       ASF.blit(ctx, canvas.width, canvas.height, state.cameraX, state.cameraY, state.zoom);
       drawNotebookPins();
@@ -2923,6 +2928,7 @@
   }
 
   function tickForward() {
+    if (isFractalMode()) return; // fractal has no discrete steps; animation runs in rAF
     if (isGPUMode()) {
       ASF.step();
       state.generation += 1;
@@ -2946,9 +2952,10 @@
           const dt = ASF.getParam('dt') || 0.05;
           ASF.setParam('dt', Math.max(0.005, Math.min(0.2, dt - str * err * 0.5)));
         }
-        // If density collapses entirely, reseed
+        // If density collapses, blend in fresh seeds without erasing survivors
         if (measured < target * 0.12) {
-          ASF.randomize(target * 0.4);
+          if (specId === 'gray-scott') ASF.randomize();
+          else ASF.injectLife();
         }
         const rdEl = document.getElementById('asfDensityReading');
         if (rdEl) rdEl.textContent = `density: ${measured.toFixed(3)}`;
@@ -3012,6 +3019,15 @@
     if (!runTick.last) runTick.last = now;
     const dt = (now - runTick.last) / 1000;
     runTick.last = now;
+
+    // Tick fractal animation + sync Julia C to fractal-lenia if both active
+    if (window.FractalEngine) {
+      FractalEngine.tick(now);
+      if (FractalEngine.isAnimating() && window.ASF && ASF.getActiveSpecId() === 'fractal-lenia') {
+        const jc = FractalEngine.getJuliaC();
+        ASF.setFractalC(jc.r, jc.i);
+      }
+    }
 
     if (state.running) {
       state.tickCarry += dt;
@@ -3130,16 +3146,23 @@
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
 
+    // Fractal Explorer mode — all gestures captured here
+    if (isFractalMode() && window.FractalEngine) {
+      state.pointer.fracDownX = ev.clientX;
+      state.pointer.fracDownY = ev.clientY;
+      state.pointer.mode = "pan"; // drag always pans
+      ev.preventDefault();
+      return;
+    }
+
     // GPU mode: paint by writing into the state texture
     if (isGPUMode() && state.canvasMode === "paint") {
       if (ev.button === 0 || ev.button === 2) {
         const rect = canvas.getBoundingClientRect();
         const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-        const [gW, gH] = ASF.getWorldSize();
-        if (wp.x >= 0 && wp.x < gW && wp.y >= 0 && wp.y < gH) {
-          const value = ev.button === 2 ? 0.0 : 1.0;
-          ASF.paintAt(wp.x, wp.y, 10, value);
-        }
+        const value = ev.button === 2 ? 0.0 : 1.0;
+        const br = Math.max(3, Math.round(10 / ASF.getSimScale(state.mode)));
+        ASF.paintAt(wp.x, wp.y, br, value);
         ev.preventDefault();
         return;
       }
@@ -3264,9 +3287,13 @@
     state.pointer.lastY = ev.clientY;
 
     if (state.pointer.mode === "pan") {
-      state.cameraX -= dx / state.zoom;
-      // GPU world is Y-up so pan direction flips
-      state.cameraY += (isGPUMode() ? 1 : -1) * dy / state.zoom;
+      if (isFractalMode() && window.FractalEngine) {
+        FractalEngine.pan(dx, dy);
+      } else {
+        state.cameraX -= dx / state.zoom;
+        // GPU world is Y-up so pan direction flips
+        state.cameraY += (isGPUMode() ? 1 : -1) * dy / state.zoom;
+      }
       return;
     }
 
@@ -3274,11 +3301,9 @@
     if (isGPUMode() && state.canvasMode === "paint" && state.pointer.down) {
       const rect = canvas.getBoundingClientRect();
       const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-      const [gW, gH] = ASF.getWorldSize();
-      if (wp.x >= 0 && wp.x < gW && wp.y >= 0 && wp.y < gH) {
-        const value = (ev.buttons & 2) ? 0.0 : 1.0;
-        ASF.paintAt(wp.x, wp.y, 10, value);
-      }
+      const value = (ev.buttons & 2) ? 0.0 : 1.0;
+      const br = Math.max(3, Math.round(10 / ASF.getSimScale(state.mode)));
+      ASF.paintAt(wp.x, wp.y, br, value);
       return;
     }
 
@@ -3320,6 +3345,35 @@
       canvas.releasePointerCapture(ev.pointerId);
     }
 
+    // Fractal mode: detect click (small drag) and act
+    if (isFractalMode() && window.FractalEngine) {
+      const ddx = ev.clientX - (state.pointer.fracDownX || ev.clientX);
+      const ddy = ev.clientY - (state.pointer.fracDownY || ev.clientY);
+      if (Math.hypot(ddx, ddy) < 6) {
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const w = FractalEngine.screenToWorld(sx, sy, canvas.width, canvas.height);
+        if (ev.button === 0 && FractalEngine.getType() === 0) {
+          // Left-click on Mandelbrot → jump to that Julia set
+          FractalEngine.setJuliaC(w.r, w.i);
+          FractalEngine.setType(1);
+          document.getElementById('fracMandelbrot')?.classList.remove('asf-btn-active');
+          document.getElementById('fracJuliaBtn')?.classList.add('asf-btn-active');
+        } else if (ev.button === 2) {
+          // Right-click → set orbit center for animation
+          const ao = FractalEngine.getAnimOrbit();
+          FractalEngine.setAnimOrbit(w.r, w.i, ao.r);
+          // Visual confirmation — flash the animate checkbox
+          const cb = document.getElementById('fracAnimate');
+          if (cb && !cb.checked) { cb.checked = true; FractalEngine.setAnimate(true); }
+        }
+      }
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      return;
+    }
+
     if (state.pointer.mode === "move" && state._selMoving && state._selCells) {
       // Commit: place lifted cells at new position
       const sel = state.selection;
@@ -3348,12 +3402,18 @@
     const rect = canvas.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
+    const zoomFactor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+
+    if (isFractalMode() && window.FractalEngine) {
+      FractalEngine.zoomAt(mx, my, canvas.width, canvas.height, zoomFactor);
+      return;
+    }
 
     const toWorld = isGPUMode() ? screenToGPUWorld : screenToWorld;
     const before = toWorld(mx, my);
-    const zoomFactor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
     if (isGPUMode()) {
-      state.zoom = Math.max(0.15, Math.min(12, state.zoom * zoomFactor));
+      const minZ = ASF.getSimScale(state.mode);
+      state.zoom = Math.max(minZ, Math.min(minZ * 8, state.zoom * zoomFactor));
     } else {
       state.zoom = Math.max(4, Math.min(60, state.zoom * zoomFactor));
     }
@@ -3637,22 +3697,30 @@
         asfPanelSetVisible(false);
       }
 
-      if (isGPUMode()) {
+      if (isFractalMode()) {
         canvas.style.display = "block";
         sphereCanvas.style.display = "none";
         state.levelState = null;
         setOverlay("");
-        const ok = ASF.activate(state.mode);
+        fractalPanelSetVisible(true);
+        canvas.style.cursor = "crosshair";
+      } else if (isGPUMode()) {
+        canvas.style.display = "block";
+        sphereCanvas.style.display = "none";
+        state.levelState = null;
+        setOverlay("");
+        fractalPanelSetVisible(false);
+        const ok = ASF.activate(state.mode, null, canvas.width, canvas.height);
         if (!ok) {
           setOverlay("WebGL 2 not available — GPU modes require a modern browser.");
           state.mode = "sandbox";
           modeSelect.value = "sandbox";
         } else {
-          // Center camera on GPU world with a fit-to-screen zoom
           const [gW, gH] = ASF.getWorldSize();
+          const simScale = ASF.getSimScale(state.mode);
           state.cameraX = gW / 2;
           state.cameraY = gH / 2;
-          state.zoom    = Math.min(canvas.width / gW, canvas.height / gH) * 0.88;
+          state.zoom    = simScale;
           asfPanelSetVisible(true);
           asfSyncPanel();
         }
@@ -3671,12 +3739,15 @@
         } else {
           initManifoldRenderer();
         }
+        fractalPanelSetVisible(false);
         init3DInput();
         state.levelState = null;
         setOverlay("");
       } else {
+        fractalPanelSetVisible(false);
         canvas.style.display = "block";
         sphereCanvas.style.display = "none";
+        canvas.style.cursor = "";
         if (state.mode === "sandbox") {
           state.levelState = null;
           setOverlay("");
@@ -5328,10 +5399,22 @@
 
   function asfPanelSetVisible(show) {
     const panel = document.getElementById("asfPanel");
+    const fPanel = document.getElementById("fractalPanel");
     const body  = document.getElementById("inspectorBody");
     if (!panel || !body) return;
-    panel.style.display = show ? "" : "none";
-    body.style.display  = show ? "none" : "";
+    panel.style.display  = show ? "" : "none";
+    if (fPanel) fPanel.style.display = "none";
+    body.style.display   = show ? "none" : "";
+  }
+
+  function fractalPanelSetVisible(show) {
+    const panel  = document.getElementById("fractalPanel");
+    const asfP   = document.getElementById("asfPanel");
+    const body   = document.getElementById("inspectorBody");
+    if (!panel) return;
+    panel.style.display  = show ? "" : "none";
+    if (asfP) asfP.style.display = "none";
+    if (body) body.style.display = show ? "none" : "";
   }
 
   function asfSyncPanel() {
@@ -5359,6 +5442,19 @@
     syncSlider("asfDt",    "asfDtOut",    "dt");
     syncSlider("asfF",     "asfFOut",     "F");
     syncSlider("asfK",     "asfKOut",     "K");
+    const scaleEl = document.getElementById("asfSimScale");
+    if (scaleEl) scaleEl.value = String(ASF.getSimScale(specId));
+    // Show fractal field controls only for fractal-lenia
+    const fracSec = document.getElementById("asfFractalSection");
+    if (fracSec) fracSec.style.display = specId === "fractal-lenia" ? "" : "none";
+    if (specId === "fractal-lenia") {
+      const cr = ASF.getParam("fracCR") ?? -0.7269;
+      const ci = ASF.getParam("fracCI") ?? 0.1889;
+      const crEl = document.getElementById("asfFracCR"); const crOut = document.getElementById("asfFracCROut");
+      const ciEl = document.getElementById("asfFracCI"); const ciOut = document.getElementById("asfFracCIOut");
+      if (crEl) { crEl.value = cr.toFixed(4); if (crOut) crOut.textContent = cr.toFixed(4); }
+      if (ciEl) { ciEl.value = ci.toFixed(4); if (ciOut) ciOut.textContent = ci.toFixed(4); }
+    }
     // Populate creature list
     const list = document.getElementById("asfCreatureList");
     if (list && ASF.CREATURES) {
@@ -5489,6 +5585,110 @@
     return row;
   }
 
+  function setupFractal() {
+    if (!window.FractalEngine) return;
+
+    const fe = FractalEngine;
+
+    // Helper: slider with live output label
+    const fSlider = (id, outId, fmt, onChange) => {
+      const el  = document.getElementById(id);
+      const out = document.getElementById(outId);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        const v = Number(el.value);
+        if (out) out.textContent = fmt(v);
+        onChange(v);
+      });
+    };
+
+    // ── Type toggle ──────────────────────────────────────────────────────────
+    document.getElementById("fracMandelbrot")?.addEventListener("click", () => {
+      fe.setType(0);
+      fe.reset();
+      document.getElementById("fracMandelbrot").classList.add("asf-btn-active");
+      document.getElementById("fracJuliaBtn")?.classList.remove("asf-btn-active");
+    });
+    document.getElementById("fracJuliaBtn")?.addEventListener("click", () => {
+      fe.setType(1);
+      document.getElementById("fracJuliaBtn").classList.add("asf-btn-active");
+      document.getElementById("fracMandelbrot")?.classList.remove("asf-btn-active");
+    });
+
+    // ── Julia C sliders ──────────────────────────────────────────────────────
+    fSlider("fracJCR", "fracJCROut", (v) => v.toFixed(4), (v) => {
+      const jc = fe.getJuliaC(); fe.setJuliaC(v, jc.i);
+    });
+    fSlider("fracJCI", "fracJCIOut", (v) => v.toFixed(4), (v) => {
+      const jc = fe.getJuliaC(); fe.setJuliaC(jc.r, v);
+    });
+
+    // ── Julia presets ────────────────────────────────────────────────────────
+    document.querySelectorAll(".frac-preset").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const r = parseFloat(btn.dataset.r), i = parseFloat(btn.dataset.i);
+        fe.setJuliaC(r, i); fe.setType(1); fe.reset();
+        document.getElementById("fracJuliaBtn")?.classList.add("asf-btn-active");
+        document.getElementById("fracMandelbrot")?.classList.remove("asf-btn-active");
+      });
+    });
+
+    // ── Animation ────────────────────────────────────────────────────────────
+    document.getElementById("fracAnimate")?.addEventListener("change", (e) => {
+      fe.setAnimate(e.target.checked);
+      if (e.target.checked) fe.setType(1); // animation only applies to Julia
+    });
+    fSlider("fracAnimSpeed",  "fracAnimSpeedOut",  (v) => v.toFixed(2), (v) => fe.setAnimSpeed(v));
+    fSlider("fracAnimRadius", "fracAnimRadiusOut", (v) => v.toFixed(3), (v) => {
+      const ao = fe.getAnimOrbit(); fe.setAnimOrbit(ao.cr, ao.ci, v);
+    });
+
+    // ── Rendering ────────────────────────────────────────────────────────────
+    fSlider("fracMaxIter", "fracMaxIterOut", (v) => String(v | 0), (v) => fe.setMaxIter(v | 0));
+    document.getElementById("fracScheme")?.addEventListener("change", (e) => fe.setScheme(parseInt(e.target.value)));
+    document.getElementById("fracDrawMode")?.addEventListener("change", (e) => fe.setDrawMode(parseInt(e.target.value)));
+    document.getElementById("fracReset")?.addEventListener("click", () => fe.reset());
+
+    // ── Fractal-Lenia: fractal field controls inside asfPanel ─────────────────
+    const flSlider = (id, outId, paramKey) => {
+      const el  = document.getElementById(id);
+      const out = document.getElementById(outId);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        const v = Number(el.value);
+        if (out) out.textContent = v.toFixed(4);
+        if (window.ASF && ASF.isReady()) ASF.setFractalC(
+          paramKey === "cr" ? v : (ASF.getParam("fracCR") ?? -0.7269),
+          paramKey === "ci" ? v : (ASF.getParam("fracCI") ?? 0.1889)
+        );
+        // Keep FractalEngine in sync (for animation cross-link)
+        const jc = fe.getJuliaC();
+        fe.setJuliaC(
+          paramKey === "cr" ? v : jc.r,
+          paramKey === "ci" ? v : jc.i
+        );
+      });
+    };
+    flSlider("asfFracCR", "asfFracCROut", "cr");
+    flSlider("asfFracCI", "asfFracCIOut", "ci");
+
+    document.getElementById("asfFracAnimate")?.addEventListener("change", (e) => {
+      fe.setAnimate(e.target.checked);
+    });
+
+    document.querySelectorAll(".asf-frac-preset").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const r = parseFloat(btn.dataset.r), i = parseFloat(btn.dataset.i);
+        if (window.ASF && ASF.isReady()) ASF.setFractalC(r, i);
+        fe.setJuliaC(r, i);
+        const crEl = document.getElementById("asfFracCR"); const crOut = document.getElementById("asfFracCROut");
+        const ciEl = document.getElementById("asfFracCI"); const ciOut = document.getElementById("asfFracCIOut");
+        if (crEl) { crEl.value = r.toFixed(4); if (crOut) crOut.textContent = r.toFixed(4); }
+        if (ciEl) { ciEl.value = i.toFixed(4); if (ciOut) ciOut.textContent = i.toFixed(4); }
+      });
+    });
+  }
+
   function setupASF() {
     if (!window.ASF) return;
 
@@ -5517,6 +5717,16 @@
       });
     }
 
+    document.getElementById("asfSimScale")?.addEventListener("change", (e) => {
+      const n = parseInt(e.target.value, 10);
+      ASF.setSimScale(n);
+      const [gW, gH] = ASF.getWorldSize();
+      const scale = ASF.getSimScale();
+      state.cameraX = gW / 2;
+      state.cameraY = gH / 2;
+      state.zoom = scale;
+    });
+
     document.getElementById("asfRandomizeBtn")?.addEventListener("click", () => {
       const density = densEl ? Number(densEl.value) : 0.15;
       ASF.randomize(density);
@@ -5524,13 +5734,7 @@
 
     document.getElementById("asfClearBtn")?.addEventListener("click", () => {
       if (!window.ASF || !ASF.isReady()) return;
-      const specId = ASF.getActiveSpecId();
-      if (specId === "gray-scott") {
-        ASF.activate("gray-scott"); // re-seed with GS initial condition
-        asfSyncPanel();
-      } else {
-        ASF.randomize(0.0001); // near-zero density = effectively clear
-      }
+      ASF.clear();
     });
 
     document.getElementById("asfColormap")?.addEventListener("change", (e) => {
@@ -5549,7 +5753,7 @@
         if (fEl) { fEl.value = F; document.getElementById("asfFOut").textContent = F.toFixed(4); }
         if (kEl) { kEl.value = K; document.getElementById("asfKOut").textContent = K.toFixed(4); }
         // Re-seed for new params
-        ASF.activate(ASF.getActiveSpecId());
+        ASF.activate(ASF.getActiveSpecId(), null, canvas.width, canvas.height);
         asfSyncPanel();
       });
     });
@@ -5634,6 +5838,7 @@
     setupAnalysisLab();
     setupNotebook();
     setupASF();
+    setupFractal();
     buildPalette();
     const paletteSearchEl = document.getElementById("paletteSearch");
     if (paletteSearchEl) {
