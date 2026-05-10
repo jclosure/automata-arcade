@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Automata Arcade</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="lib/codemirror/codemirror.min.css" />
+    <link rel="stylesheet" href="lib/codemirror/theme-dark.min.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -45,7 +47,7 @@
           <label class="level-wrap">Level
             <select id="levelSelect"></select>
           </label>
-          <label class="mode-wrap"><input type="checkbox" id="sharedStateInput" checked /> Shared State</label>
+          <label class="mode-wrap"><input type="checkbox" id="sharedStateInput" /> Shared State</label>
           <button id="startLevelBtn">Start Level</button>
           <button id="libraryBtn">Library</button>
           <button id="notebookBtn" class="nb-toggle-btn">📓 Notebook</button>
@@ -498,6 +500,18 @@
             </div>
           </div>
           <div class="bp-body" id="scriptPanelBody">
+            <div class="sc-samples-bar">
+              <span class="sc-samples-label">samples</span>
+              <select id="scriptSampleSelect" class="sc-sample-select">
+                <option value="">— pick a sample —</option>
+                <option value="log">Log population</option>
+                <option value="fill">Fill random region</option>
+                <option value="rules">Set rules (Day &amp; Night)</option>
+                <option value="hookStep">Hook: log every 60 gens</option>
+                <option value="hookPause">Hook: pause at pop 500</option>
+                <option value="overlay">Draw canvas overlay</option>
+              </select>
+            </div>
             <div id="scriptCells" class="sc-cells-list"></div>
           </div>
         </div>
@@ -518,9 +532,15 @@
       </div>
 
       <div class="nb-auto-section">
-        <div class="nb-section-label">Live Feed <span class="nb-auto-dot"></span></div>
+        <div class="nb-section-label">
+          Live Feed <span class="nb-auto-dot nb-auto-dot-off"></span>
+          <div class="nb-journal-btns">
+            <button id="nbAutoToggle" class="nb-pin-btn" title="Enable auto-detection">▶ Enable</button>
+            <button id="nbAutoClear" class="nb-pin-btn" title="Clear feed">✕ Clear</button>
+          </div>
+        </div>
         <div id="nbAutoFeed" class="nb-auto-feed">
-          <div class="nb-feed-empty">Auto-detection active — events will appear here as the simulation runs.</div>
+          <div class="nb-feed-empty">Auto-detection paused — press Enable to start.</div>
         </div>
       </div>
 
@@ -596,6 +616,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+    <script src="lib/codemirror/codemirror.min.js"></script>
+    <script src="lib/codemirror/javascript.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

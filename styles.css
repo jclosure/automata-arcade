@@ -468,6 +468,53 @@ button:hover {
 }
 .sc-cell.sc-expanded .sc-editor-wrap textarea { height: 200px; }
 
+/* ── CodeMirror overrides ──────────────────────────────────────── */
+.sc-editor-wrap .CodeMirror {
+  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  height: 60px;
+  background: rgba(0,0,0,0.0);
+  border: none;
+  color: #f8f8f2;
+}
+.sc-cell.sc-expanded .sc-editor-wrap .CodeMirror { height: 200px; }
+.sc-editor-wrap .CodeMirror-scroll { padding: 4px 6px; box-sizing: border-box; }
+.sc-editor-wrap .CodeMirror-lines { padding: 0; }
+.sc-editor-wrap .CodeMirror-focused { outline: none; }
+.sc-editor-wrap .CodeMirror-cursor { border-left-color: #6fffaa; }
+
+/* ── Samples bar ───────────────────────────────────────────────── */
+.sc-samples-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 3px;
+  border-bottom: 1px solid var(--line);
+}
+.sc-samples-label {
+  font-family: monospace;
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #445;
+  white-space: nowrap;
+}
+.sc-sample-select {
+  flex: 1;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(111,255,170,0.12);
+  border-radius: 4px;
+  color: #8ecfaa;
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 4px;
+  cursor: pointer;
+  outline: none;
+}
+.sc-sample-select:hover { border-color: rgba(111,255,170,0.3); }
+.sc-sample-select option { background: #1a2530; }
+
 .sc-output {
   font-family: monospace;
   font-size: 10px;
@@ -1466,11 +1513,16 @@ kbd {
   align-items: center;
   gap: 6px;
 }
+.nb-section-label > .nb-journal-btns { margin-left: auto; }
 .nb-auto-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
   background: var(--accent-2);
   animation: nb-blink 2s ease infinite;
+}
+.nb-auto-dot.nb-auto-dot-off {
+  background: #334;
+  animation: none;
 }
 @keyframes nb-blink {
   0%, 100% { opacity: 1; } 50% { opacity: 0.25; }

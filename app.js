@@ -38,7 +38,7 @@
   const kernelRadiusOut = document.getElementById("kernelRadiusOut");
 
   const state = {
-    sharedState: true,
+    sharedState: false,
     alive: new Set(), // shared game state (all modes)
     // per-mode alive sets used when sharedState is false
     modeAlive: {
@@ -134,7 +134,8 @@
     _ffDrawing: null,    // {cx,cy,r} while drag-drawing
     lenses: [],
     _lensSelected: null,
-    canvasMode: "paint",  // "paint" | "move" | "select" | "force" | "zone" | "lens"
+    canvasMode: "paint",  // "paint" | "move" | "select" | "object" | "force" | "zone" | "lens"
+    _prevCanvasMode: null, // mode to restore when leaving object mode
     forcePaintType: "attract",
     forcePaintRadius: 15,
     forcePaintStrength: 3,
@@ -153,7 +154,7 @@
       open: false,
       pinMode: false,
       _pendingPin: null,
-      autoEnabled: true,
+      autoEnabled: false,
       _watch: { lastPop: -1, peakPop: 0, stableSince: null, stableLogged: false, lastAutoGen: -Infinity },
       _nextId: 1,
       _colorIdx: 0,
@@ -1580,7 +1581,6 @@
     let stackBonus = 0;
     let exclBonus = 0, exclMag = 0;
     for (const ff of state.forceFields) {
-      if (ff.visible === false) continue;
       const dist = Math.sqrt((col - ff.x) ** 2 + (row - ff.y) ** 2);
       if (dist >= ff.radius) continue;
       const u = dist / ff.radius;
@@ -3304,7 +3304,7 @@
 
     state.canvasMode = mode;
 
-    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell" };
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell", object: "default" };
     canvas.style.cursor = cursors[mode] || "default";
     if (mode !== "zone")  { state._zoneDrawing = null; state._zoneDragMode = null; }
     if (mode !== "force") { state._ffDrawing = null; state._ffDragMode = null; }
@@ -3339,6 +3339,49 @@
     state.pointer.down = true;
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
+
+    // Object mode: interact with any object, or exit to previous mode on empty click
+    if (state.canvasMode === "object" && ev.button === 0) {
+      const rectO = canvas.getBoundingClientRect();
+      const sxO = ev.clientX - rectO.left, syO = ev.clientY - rectO.top;
+      const hitO = _anyObjectHitTest(sxO, syO);
+      if (!hitO) {
+        const prev = state._prevCanvasMode || "paint";
+        state._prevCanvasMode = null;
+        setCanvasMode(prev);
+        ev.preventDefault(); return;
+      }
+      if (hitO.type === "field") {
+        state._ffSelected = hitO.id; state._zoneSelected = null; state._lensSelected = null;
+        const ff = state.forceFields.find(f => f.id === hitO.id);
+        if (ff) {
+          const { cx, cy } = _ffScreenCenter(ff);
+          state._ffDragMode = hitO.mode;
+          state._ffDragOrigin = { sx: sxO, sy: syO, fx: ff.x, fy: ff.y, fr: ff.radius, cx, cy };
+        }
+        fieldsPanelSync();
+      } else if (hitO.type === "zone") {
+        state._zoneSelected = hitO.id; state._ffSelected = null; state._lensSelected = null;
+        const zz = state.zones.find(z => z.id === hitO.id);
+        if (zz) {
+          const gxyO = screenToGrid(sxO, syO);
+          state._zoneDragMode = hitO.mode;
+          state._zoneDragOrigin = { mx: Math.floor(gxyO.x), my: Math.floor(gxyO.y), zx: zz.x, zy: zz.y, zw: zz.w, zh: zz.h };
+        }
+        zonesPanelSync();
+      } else if (hitO.type === "lens") {
+        state._lensSelected = hitO.id; state._ffSelected = null; state._zoneSelected = null;
+        state.pointer.mode = "lens";
+        const ll = state.lenses.find(l => l.id === hitO.id);
+        if (ll) {
+          _lensDragOp = hitO.mode === "resize"
+            ? { type: "resize", id: ll.id, startX: sxO, startY: syO, origR: ll.radius, origCx: ll.cx, origCy: ll.cy }
+            : { type: "move", id: ll.id, startX: sxO, startY: syO, origCx: ll.cx, origCy: ll.cy };
+        }
+        lensesPanelSync();
+      }
+      ev.preventDefault(); return;
+    }
 
     // Zone mode: draw / select / move / resize zones
     if (state.canvasMode === "zone" && ev.button === 0) {
@@ -3375,6 +3418,10 @@
         zonesPanelSync();
         ev.preventDefault(); return;
       }
+
+      // No zone hit — check cross-type objects before drawing
+      { const cH = _anyObjectHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+        if (cH && cH.type !== "zone") { _applyCrossTypeHit(cH, ev.clientX - rect.left, ev.clientY - rect.top); ev.preventDefault(); return; } }
 
       // Otherwise start drawing a new zone
       state._zoneSelected = null;
@@ -3413,6 +3460,47 @@
     const rect = canvas.getBoundingClientRect();
     const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
 
+    // In paint or move mode, clicking an object enters unified object mode
+    if ((state.canvasMode === "paint" || state.canvasMode === "move") && ev.button === 0) {
+      const rectE = canvas.getBoundingClientRect();
+      const sxE = ev.clientX - rectE.left, syE = ev.clientY - rectE.top;
+      const hitE = _anyObjectHitTest(sxE, syE);
+      if (hitE) {
+        state._prevCanvasMode = state.canvasMode;
+        setCanvasMode("object");
+        if (hitE.type === "field") {
+          state._ffSelected = hitE.id; state._zoneSelected = null; state._lensSelected = null;
+          const ff = state.forceFields.find(f => f.id === hitE.id);
+          if (ff) {
+            const { cx, cy } = _ffScreenCenter(ff);
+            state._ffDragMode = hitE.mode;
+            state._ffDragOrigin = { sx: sxE, sy: syE, fx: ff.x, fy: ff.y, fr: ff.radius, cx, cy };
+          }
+          fieldsPanelSync();
+        } else if (hitE.type === "zone") {
+          state._zoneSelected = hitE.id; state._ffSelected = null; state._lensSelected = null;
+          const zz = state.zones.find(z => z.id === hitE.id);
+          if (zz) {
+            const gxyE = screenToGrid(sxE, syE);
+            state._zoneDragMode = hitE.mode;
+            state._zoneDragOrigin = { mx: Math.floor(gxyE.x), my: Math.floor(gxyE.y), zx: zz.x, zy: zz.y, zw: zz.w, zh: zz.h };
+          }
+          zonesPanelSync();
+        } else if (hitE.type === "lens") {
+          state._lensSelected = hitE.id; state._ffSelected = null; state._zoneSelected = null;
+          state.pointer.mode = "lens";
+          const ll = state.lenses.find(l => l.id === hitE.id);
+          if (ll) {
+            _lensDragOp = hitE.mode === "resize"
+              ? { type: "resize", id: ll.id, startX: sxE, startY: syE, origR: ll.radius, origCx: ll.cx, origCy: ll.cy }
+              : { type: "move", id: ll.id, startX: sxE, startY: syE, origCx: ll.cx, origCy: ll.cy };
+          }
+          lensesPanelSync();
+        }
+        ev.preventDefault(); return;
+      }
+    }
+
     if (state.canvasMode === "move") {
       state.pointer.mode = "pan";
       canvas.style.cursor = "grabbing";
@@ -3441,6 +3529,10 @@
         state._selCells = cells;
         state._selMoving = true;
       } else {
+        // Not on the selection — check for cross-type object pick
+        const sxS = ev.clientX - rect.left, syS = ev.clientY - rect.top;
+        const cHS = _anyObjectHitTest(sxS, syS);
+        if (cHS) { _applyCrossTypeHit(cHS, sxS, syS); ev.preventDefault(); return; }
         state.pointer.mode = "select";
         state._selCells = null;
         state._selMoving = false;
@@ -3463,6 +3555,9 @@
         state._ffDragOrigin = { sx: sx4, sy: sy4, fx: hit.field.x, fy: hit.field.y, fr: hit.field.radius, cx, cy };
         fieldsPanelSync();
       } else {
+        // No field hit — check cross-type objects before drawing
+        const cH4 = _anyObjectHitTest(sx4, sy4);
+        if (cH4 && cH4.type !== "field") { _applyCrossTypeHit(cH4, sx4, sy4); ev.preventDefault(); return; }
         state._ffSelected = null;
         state._ffDragMode = "draw";
         state._ffDrawing  = { cx: sx4, cy: sy4, r: 0 };
@@ -3513,6 +3608,10 @@
         }
       }
 
+      // No lens hit — check cross-type objects before drawing
+      const cHL = _anyObjectHitTest(px, py);
+      if (cHL && cHL.type !== "lens") { _applyCrossTypeHit(cHL, px, py); ev.preventDefault(); return; }
+
       // Start drawing a new lens
       _lensDragOp = { type: 'draw', startX: px, startY: py, curX: px, curY: py };
       return;
@@ -3530,36 +3629,37 @@
 
     // Update cursor when hovering (not dragging)
     if (!state.pointer.down) {
-      if (state.canvasMode === "select") {
-        const sel = state.selection;
-        const hc = state.hoverCell;
-        const overSel = sel && sel.w > 0 && hc
-          && hc.x >= sel.x && hc.x < sel.x + sel.w
-          && hc.y >= sel.y && hc.y < sel.y + sel.h;
-        canvas.style.cursor = overSel ? "move" : "crosshair";
-      } else if (state.canvasMode === "move") {
+      if (state.canvasMode === "move") {
         canvas.style.cursor = "grab";
-      } else if (state.canvasMode === "force") {
-        const rect6 = canvas.getBoundingClientRect();
-        const sx6 = ev.clientX - rect6.left, sy6 = ev.clientY - rect6.top;
-        const hit6 = _ffHitTest(sx6, sy6);
-        canvas.style.cursor = hit6 ? (hit6.mode === "resize" ? "ew-resize" : "move") : "crosshair";
-      } else if (state.canvasMode === "zone") {
-        const rect3 = canvas.getBoundingClientRect();
-        const gxy3  = screenToGrid(ev.clientX - rect3.left, ev.clientY - rect3.top);
-        const gx3   = Math.floor(gxy3.x), gy3 = Math.floor(gxy3.y);
-        const selZ3 = state.zones.find(z => z.id === state._zoneSelected);
-        if (selZ3) {
-          const h = _zoneHitHandle(ev.clientX - rect3.left, ev.clientY - rect3.top, selZ3);
-          if (h) {
-            const cmap = { 'resize-nw':'nw-resize','resize-n':'n-resize','resize-ne':'ne-resize',
-              'resize-w':'w-resize','resize-e':'e-resize',
-              'resize-sw':'sw-resize','resize-s':'s-resize','resize-se':'se-resize' };
-            canvas.style.cursor = cmap[h] || "crosshair";
-          } else if (gx3 >= selZ3.x && gx3 < selZ3.x + selZ3.w && gy3 >= selZ3.y && gy3 < selZ3.y + selZ3.h) {
-            canvas.style.cursor = "move";
-          } else { canvas.style.cursor = "crosshair"; }
-        } else { canvas.style.cursor = "crosshair"; }
+      } else if (state.canvasMode === "paint") {
+        const rectP = canvas.getBoundingClientRect();
+        const sxP = ev.clientX - rectP.left, syP = ev.clientY - rectP.top;
+        canvas.style.cursor = _anyObjectHitTest(sxP, syP) ? "pointer" : "crosshair";
+      } else if (state.canvasMode === "object" || state.canvasMode === "select" || state.canvasMode === "force" || state.canvasMode === "zone" || state.canvasMode === "lens") {
+        const rectH = canvas.getBoundingClientRect();
+        const sxH = ev.clientX - rectH.left, syH = ev.clientY - rectH.top;
+        // In select mode, hovering over the active selection box takes priority
+        if (state.canvasMode === "select") {
+          const sel = state.selection;
+          const hc  = state.hoverCell;
+          const overSel = sel && sel.w > 0 && hc
+            && hc.x >= sel.x && hc.x < sel.x + sel.w
+            && hc.y >= sel.y && hc.y < sel.y + sel.h;
+          if (overSel) { canvas.style.cursor = "move"; return; }
+        }
+        const hitH = _anyObjectHitTest(sxH, syH);
+        if (!hitH) {
+          canvas.style.cursor = state.canvasMode === "object" ? "default" : "crosshair";
+        } else if (hitH.mode === "move") {
+          canvas.style.cursor = "move";
+        } else if (hitH.mode === "resize") {
+          canvas.style.cursor = "ew-resize";
+        } else {
+          const RMAP = { 'resize-nw':'nw-resize','resize-n':'n-resize','resize-ne':'ne-resize',
+            'resize-w':'w-resize','resize-e':'e-resize',
+            'resize-sw':'sw-resize','resize-s':'s-resize','resize-se':'se-resize' };
+          canvas.style.cursor = RMAP[hitH.mode] || "crosshair";
+        }
       }
     }
 
@@ -3590,7 +3690,7 @@
       return;
     }
 
-    if (state.canvasMode === "force" && state._ffDragMode) {
+    if ((state.canvasMode === "force" || state.canvasMode === "object") && state._ffDragMode) {
       const rect5 = canvas.getBoundingClientRect();
       const sx5 = ev.clientX - rect5.left, sy5 = ev.clientY - rect5.top;
       if (state._ffDragMode === "draw" && state._ffDrawing) {
@@ -3601,7 +3701,7 @@
       return;
     }
 
-    if (state.canvasMode === "zone" && state._zoneDragMode) {
+    if ((state.canvasMode === "zone" || state.canvasMode === "object") && state._zoneDragMode) {
       const rect2 = canvas.getBoundingClientRect();
       const gxy2  = screenToGrid(ev.clientX - rect2.left, ev.clientY - rect2.top);
       const gx2   = Math.floor(gxy2.x), gy2 = Math.floor(gxy2.y);
@@ -3699,6 +3799,65 @@
       state._selMoveDelta = { dx: 0, dy: 0 };
       const selInfoEl = document.getElementById("selInfo");
       if (selInfoEl) selInfoEl.textContent = `${sel.w} × ${sel.h}`;
+    }
+
+    if ((state.canvasMode === "force" || state.canvasMode === "object") && state._ffDragMode) {
+      if (state._ffDragMode === "draw" && state._ffDrawing) {
+        const d = state._ffDrawing;
+        const worldR = d.r / state.zoom;
+        if (worldR >= 2) {
+          const wc = screenToWorld(d.cx, d.cy);
+          const id = ++state._ffIdSeq;
+          state.forceFields.push({
+            id, x: wc.x, y: wc.y,
+            radius: Math.round(worldR),
+            type: state.forcePaintType,
+            strength: state.forcePaintStrength,
+            falloff: state.forcePaintFalloff || "linear",
+            combine: true,
+            visible: true,
+            name: `Field ${id}`,
+          });
+          state._ffSelected = id;
+          fieldsPanelSync();
+        }
+        state._ffDrawing = null;
+      }
+      state._ffDragMode = null;
+      state._ffDragOrigin = null;
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      return;
+    }
+
+    if ((state.canvasMode === "zone" || state.canvasMode === "object") && state._zoneDragMode) {
+      if (state._zoneDragMode === "draw" && state._zoneDrawing) {
+        const d = state._zoneDrawing;
+        const x = Math.min(d.x0, d.x1);
+        const y = Math.min(d.y0, d.y1);
+        const w = Math.abs(d.x1 - d.x0) + 1;
+        const h = Math.abs(d.y1 - d.y0) + 1;
+        if (w >= 2 && h >= 2) {
+          const id = ++state._zoneIdSeq;
+          state.zones.push({
+            id, x, y, w, h,
+            ruleB: new Set([...state.ruleB]),
+            ruleS: new Set([...state.ruleS]),
+            name: `Zone ${id}`,
+            color: ZONE_COLORS[(id - 1) % ZONE_COLORS.length],
+            combine: true,
+            visible: true,
+          });
+          state._zoneSelected = id;
+          zonesPanelSync();
+        }
+        state._zoneDrawing = null;
+      }
+      state._zoneDragMode = null;
+      state._zoneDragOrigin = null;
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      return;
     }
 
     state.pointer.down = false;
@@ -4107,6 +4266,12 @@
         state._ffSelected = null;
         fieldsPanelSync();
         ev.preventDefault();
+      } else if ((ev.key === "Delete" || ev.key === "Backspace") && state._lensSelected != null) {
+        state.lenses = state.lenses.filter(l => l.id !== state._lensSelected);
+        state._lensSelected = null;
+        _lensDragOp = null;
+        lensesPanelSync();
+        ev.preventDefault();
       } else if ((ev.key === "Delete" || ev.key === "Backspace") && hasSel) {
         deleteSelCells();
         state.selection = null;
@@ -4184,8 +4349,14 @@
       } else if (ev.key.toLowerCase() === "l" && !mod) {
         setCanvasMode(state.canvasMode === "lens" ? "paint" : "lens");
       } else if (ev.key === "Escape") {
-        setCanvasMode("paint");
-        state.selection = null;
+        if (state.canvasMode === "object") {
+          const prev = state._prevCanvasMode || "paint";
+          state._prevCanvasMode = null;
+          setCanvasMode(prev);
+        } else {
+          setCanvasMode("paint");
+          state.selection = null;
+        }
         ev.preventDefault();
       } else if (ev.key.toLowerCase() === "x" && !mod) {
         if (state.cellTypesEnabled) {
@@ -4964,6 +5135,80 @@
     return null;
   }
 
+  // Hit-test across ALL object types (fields, zones, lenses).
+  // sx/sy are CSS-pixel canvas coordinates.
+  // Returns { type, id, mode } or null.
+  function _anyObjectHitTest(sx, sy) {
+    // Force fields
+    const ffHit = _ffHitTest(sx, sy);
+    if (ffHit) return { type: "field", id: ffHit.field.id, mode: ffHit.mode };
+
+    // Zones — check selected zone handles first, then all zone bodies
+    const gxy = screenToGrid(sx, sy);
+    const gx = Math.floor(gxy.x), gy = Math.floor(gxy.y);
+    const selZ = state.zones.find(z => z.id === state._zoneSelected);
+    if (selZ && selZ.visible !== false) {
+      const handle = _zoneHitHandle(sx, sy, selZ);
+      if (handle) return { type: "zone", id: selZ.id, mode: handle };
+      if (gx >= selZ.x && gx < selZ.x + selZ.w && gy >= selZ.y && gy < selZ.y + selZ.h)
+        return { type: "zone", id: selZ.id, mode: "move" };
+    }
+    for (let i = state.zones.length - 1; i >= 0; i--) {
+      const z = state.zones[i];
+      if (z.visible === false || z.id === state._zoneSelected) continue;
+      if (gx >= z.x && gx < z.x + z.w && gy >= z.y && gy < z.y + z.h)
+        return { type: "zone", id: z.id, mode: "move" };
+    }
+
+    // Lenses
+    for (const l of [...state.lenses].reverse()) {
+      if (l.visible === false) continue;
+      const hx = l.cx + l.radius * 0.707, hy = l.cy + l.radius * 0.707;
+      if (Math.hypot(sx - hx, sy - hy) < 10) return { type: "lens", id: l.id, mode: "resize" };
+      if (Math.hypot(sx - l.cx, sy - l.cy) <= l.radius) return { type: "lens", id: l.id, mode: "move" };
+    }
+
+    return null;
+  }
+
+  // Switch to an object's native mode and start a move/resize drag.
+  // Called when user clicks an object type different from the current canvasMode.
+  function _applyCrossTypeHit(hit, sx, sy) {
+    if (hit.type === "field") {
+      setCanvasMode("force");
+      state._ffSelected = hit.id;
+      const ff = state.forceFields.find(f => f.id === hit.id);
+      if (ff) {
+        const { cx, cy } = _ffScreenCenter(ff);
+        state._ffDragMode   = hit.mode;
+        state._ffDragOrigin = { sx, sy, fx: ff.x, fy: ff.y, fr: ff.radius, cx, cy };
+      }
+      state.pointer.mode = null;
+      fieldsPanelSync();
+    } else if (hit.type === "zone") {
+      setCanvasMode("zone");
+      state._zoneSelected = hit.id;
+      const zz = state.zones.find(z => z.id === hit.id);
+      if (zz) {
+        const gxy = screenToGrid(sx, sy);
+        state._zoneDragMode   = hit.mode;
+        state._zoneDragOrigin = { mx: Math.floor(gxy.x), my: Math.floor(gxy.y), zx: zz.x, zy: zz.y, zw: zz.w, zh: zz.h };
+      }
+      zonesPanelSync();
+    } else if (hit.type === "lens") {
+      setCanvasMode("lens");
+      state._lensSelected = hit.id;
+      state.pointer.mode = "lens";
+      const ll = state.lenses.find(l => l.id === hit.id);
+      if (ll) {
+        _lensDragOp = hit.mode === "resize"
+          ? { type: "resize", id: ll.id, startX: sx, startY: sy, origR: ll.radius, origCx: ll.cx, origCy: ll.cy }
+          : { type: "move",   id: ll.id, startX: sx, startY: sy, origCx: ll.cx, origCy: ll.cy };
+      }
+      lensesPanelSync();
+    }
+  }
+
   function _ffApplyDrag(sx, sy) {
     const o  = state._ffDragOrigin;
     const ff = state.forceFields.find(f => f.id === state._ffSelected);
@@ -5637,7 +5882,7 @@
 
   function _saveScript() {
     try {
-      const data = _scriptCells.map(c => ({ code: c.ta ? c.ta.value : c.code || "" }));
+      const data = _scriptCells.map(c => ({ code: _cellCode(c) }));
       localStorage.setItem(LS_SCRIPT, JSON.stringify(data));
     } catch (_) {}
   }
@@ -5649,6 +5894,10 @@
       const data = JSON.parse(raw);
       for (const { code } of data) _addCell(code);
     } catch (_) {}
+  }
+
+  function _cellCode(cell) {
+    return cell.editor ? cell.editor.getValue() : (cell.ta ? cell.ta.value : (cell.code || ""));
   }
 
   function _addCell(code = "") {
@@ -5673,7 +5922,10 @@
     expandBtn.className = "sc-btn";
     expandBtn.textContent = "↕";
     expandBtn.title = "Expand/collapse";
-    expandBtn.addEventListener("click", () => wrap.classList.toggle("sc-expanded"));
+    expandBtn.addEventListener("click", () => {
+      wrap.classList.toggle("sc-expanded");
+      cell.editor?.refresh();
+    });
 
     const runBtn = document.createElement("button");
     runBtn.className = "sc-btn";
@@ -5694,17 +5946,39 @@
 
     const editorWrap = document.createElement("div");
     editorWrap.className = "sc-editor-wrap";
-    const ta = document.createElement("textarea");
-    ta.value = code;
-    ta.spellcheck = false;
-    ta.autocomplete = "off";
-    ta.placeholder = "// sdk, cells, rules, sim, canvas, globals, print\n// Shift+Enter to run";
-    ta.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); _runCell(id); }
-    });
-    ta.addEventListener("input", () => { cell.code = ta.value; _saveScript(); });
-    cell.ta = ta;
-    editorWrap.appendChild(ta);
+
+    if (typeof CodeMirror !== "undefined") {
+      const editor = CodeMirror(editorWrap, {
+        value: code,
+        mode: "javascript",
+        theme: "dracula",
+        lineNumbers: false,
+        matchBrackets: true,
+        lineWrapping: true,
+        indentUnit: 2,
+        tabSize: 2,
+        extraKeys: {
+          "Shift-Enter": () => _runCell(id),
+          "Tab": cm => cm.execCommand("indentMore"),
+          "Shift-Tab": cm => cm.execCommand("indentLess"),
+        },
+      });
+      cell.editor = editor;
+      editor.on("change", () => { cell.code = editor.getValue(); _saveScript(); });
+      setTimeout(() => editor.refresh(), 0);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = code;
+      ta.spellcheck = false;
+      ta.autocomplete = "off";
+      ta.placeholder = "// sdk, cells, rules, sim, canvas, globals, print\n// Shift+Enter to run";
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); _runCell(id); }
+      });
+      ta.addEventListener("input", () => { cell.code = ta.value; _saveScript(); });
+      cell.ta = ta;
+      editorWrap.appendChild(ta);
+    }
 
     const output = document.createElement("div");
     output.className = "sc-output";
@@ -5717,7 +5991,8 @@
     container.appendChild(wrap);
     cell._elem = wrap;
 
-    ta.focus();
+    if (cell.editor) cell.editor.focus();
+    else cell.ta?.focus();
     return cell;
   }
 
@@ -5739,7 +6014,7 @@
     cell._hookCleanups.forEach(fn => fn());
     cell._hookCleanups = [];
 
-    const code = cell.ta ? cell.ta.value : (cell.code || "");
+    const code = _cellCode(cell);
     const out = cell._output;
     if (out) { out.style.display = "none"; out.textContent = ""; out.className = "sc-output"; }
 
@@ -5791,6 +6066,15 @@
     _updateHooksBadge();
   }
 
+  const SCRIPT_SAMPLES = {
+    log:       `log('gen:', sim.generation, '  pop:', cells.size);`,
+    fill:      `// seed a 40×40 region at 35% density\ncells.fill(-20, -20, 40, 40, 0.35);\nlog('seeded');`,
+    rules:     `// Day & Night\nrules.set([3,6,7,8], [3,4,6,7,8]);\nlog('rules:', rules.toString());`,
+    hookStep:  `// log population every 60 generations\nhook('afterStep', () => {\n  if (sim.generation % 60 === 0)\n    log('gen', sim.generation, 'pop', cells.size);\n});`,
+    hookPause: `// auto-pause when pop reaches 500\nhook('afterStep', () => {\n  if (cells.size >= 500) {\n    sim.pause();\n    log('paused at', cells.size, 'cells — gen', sim.generation);\n  }\n});`,
+    overlay:   `// tint the canvas each frame\nconst { ctx, width, height } = canvas;\nctx.save();\nctx.fillStyle = 'rgba(91,224,188,0.06)';\nctx.fillRect(0, 0, width, height);\nctx.restore();\nlog('overlay drawn');`,
+  };
+
   function setupScriptKernel() {
     document.getElementById("scriptAddCell")?.addEventListener("click", () => {
       _addCell();
@@ -5810,9 +6094,20 @@
       [..._scriptCells].map(c => c.id).forEach(id => _deleteCell(id));
     });
 
+    const sampleSel = document.getElementById("scriptSampleSelect");
+    sampleSel?.addEventListener("change", () => {
+      const code = SCRIPT_SAMPLES[sampleSel.value];
+      if (!code) return;
+      sampleSel.value = "";
+      _addCell(code);
+      document.getElementById("scriptPanel")?.classList.remove("bp-collapsed");
+      const btn = document.getElementById("scriptDrawerToggle");
+      if (btn) btn.textContent = "▼";
+    });
+
     _loadScript();
     if (_scriptCells.length === 0) {
-      _addCell("// Script Kernel\n// sdk: cells, rules, sim, canvas, globals, hook, log\n// Shift+Enter runs · ↕ expands\nlog('pop:', cells.size, '  gen:', sim.generation);");
+      _addCell("// Script Kernel — sdk: cells, rules, sim, canvas, globals, hook, log\n// Shift+Enter to run  ·  ↕ to expand\nlog('pop:', cells.size, '  gen:', sim.generation);");
     }
   }
 
@@ -6331,6 +6626,32 @@
 
     document.getElementById("nbScenesBtn")?.addEventListener("click", nbPlayScenes);
     document.getElementById("nbExportBtn")?.addEventListener("click", nbExport);
+
+    const autoToggle = document.getElementById("nbAutoToggle");
+    const autoClear  = document.getElementById("nbAutoClear");
+    function _syncAutoToggle() {
+      const dot = document.querySelector(".nb-auto-dot");
+      if (!autoToggle) return;
+      if (state.notebook.autoEnabled) {
+        autoToggle.textContent = "⏸ Pause";
+        dot?.classList.remove("nb-auto-dot-off");
+      } else {
+        autoToggle.textContent = "▶ Enable";
+        dot?.classList.add("nb-auto-dot-off");
+      }
+    }
+    autoToggle?.addEventListener("click", () => {
+      state.notebook.autoEnabled = !state.notebook.autoEnabled;
+      _syncAutoToggle();
+    });
+    autoClear?.addEventListener("click", () => {
+      state.notebook.entries = state.notebook.entries.filter(e => e.type !== "auto");
+      const feed = document.getElementById("nbAutoFeed");
+      if (feed) feed.innerHTML = '<div class="nb-feed-empty">Feed cleared.</div>';
+      nbSave();
+      if (state.notebook.open) nbRender();
+    });
+    _syncAutoToggle();
 
     // Escape closes pin mode
     window.addEventListener("keydown", ev => {
