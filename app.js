@@ -130,9 +130,11 @@
     _ffIdSeq: 0,
     _ffSelected: null,
     _ffDragMode: null,   // null | "move" | "resize" | "draw"
-    _ffDragOrigin: null, // snapshot at drag start
+    _ffDragOrigin: null,
     _ffDrawing: null,    // {cx,cy,r} while drag-drawing
-    canvasMode: "paint",  // "paint" | "move" | "select" | "force" | "zone"
+    lenses: [],
+    _lensSelected: null,
+    canvasMode: "paint",  // "paint" | "move" | "select" | "force" | "zone" | "lens"
     forcePaintType: "attract",
     forcePaintRadius: 15,
     forcePaintStrength: 3,
@@ -273,6 +275,25 @@
   let _ruleInput2El = null;
   let heatMap = new Map();
   let entrenchMap = new Map();
+
+  // Lens state
+  let _lensIdSeq = 0;
+  let _lensOffscreen = null;
+  let _lensDragOp = null; // { type: 'draw'|'move'|'resize', id?, startX, startY, origCx?, origCy?, origR? }
+  let _lensZoomDefault = 4;
+
+  // Script Kernel state
+  let _scriptCells = [];
+  let _scriptIdSeq = 0;
+  const LS_SCRIPT = 'aa_script_v2';
+  const _kernel = {
+    globals: Object.create(null),
+    hooks: { afterStep: new Set(), beforeDraw: new Set(), afterDraw: new Set() },
+  };
+
+  // Sidebar state
+  let _sidebarCollapsed = false;
+  let _rightW = 300;
 
   const REQUIRED_PREFABS = [
     {
@@ -2960,6 +2981,125 @@
     ctx.restore();
   }
 
+  function drawLenses() {
+    const visible = state.lenses.filter(l => l.visible !== false);
+    if (!visible.length) return;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Snapshot current canvas pixels before we overdraw
+    if (!_lensOffscreen || _lensOffscreen.width !== canvas.width || _lensOffscreen.height !== canvas.height) {
+      _lensOffscreen = document.createElement('canvas');
+      _lensOffscreen.width = canvas.width;
+      _lensOffscreen.height = canvas.height;
+    }
+    _lensOffscreen.getContext('2d').drawImage(canvas, 0, 0);
+
+    for (const lens of visible) {
+      const { cx, cy, radius, zoom } = lens;
+      const isSel = lens.id === state._lensSelected;
+
+      ctx.save();
+      // Dark fill so magnified area reads clearly
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#06090f';
+      ctx.fill();
+      // Clip to circle
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.clip();
+
+      // Source in physical pixels: region of (2r/zoom) centered on lens
+      const srcW = (radius * 2 / zoom) * dpr;
+      const srcH = (radius * 2 / zoom) * dpr;
+      const rawSX = cx * dpr - srcW / 2;
+      const rawSY = cy * dpr - srcH / 2;
+      const srcX = Math.max(0, rawSX);
+      const srcY = Math.max(0, rawSY);
+      const clampW = Math.min(srcW, _lensOffscreen.width - srcX);
+      const clampH = Math.min(srcH, _lensOffscreen.height - srcY);
+      // Dest: map clamped src to full 2r × 2r dest rect
+      const destX = cx - radius + (rawSX < 0 ? (-rawSX / dpr) * zoom : 0);
+      const destY = cy - radius + (rawSY < 0 ? (-rawSY / dpr) * zoom : 0);
+      ctx.drawImage(_lensOffscreen, srcX, srcY, clampW, clampH,
+        destX, destY, (clampW / dpr) * zoom, (clampH / dpr) * zoom);
+
+      ctx.restore();
+
+      // Decorations (outside clip)
+      ctx.save();
+
+      // Vignette ring
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      const vg = ctx.createRadialGradient(cx, cy, radius * 0.6, cx, cy, radius);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.35)');
+      ctx.fillStyle = vg;
+      ctx.fill();
+
+      // Border
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = isSel ? 'rgba(100,220,255,1)' : 'rgba(100,220,255,0.5)';
+      ctx.lineWidth = isSel ? 2.5 : 1.5;
+      ctx.stroke();
+
+      // Crosshair
+      ctx.strokeStyle = 'rgba(100,220,255,0.28)';
+      ctx.lineWidth = 0.75;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cx - radius * 0.18, cy); ctx.lineTo(cx + radius * 0.18, cy);
+      ctx.moveTo(cx, cy - radius * 0.18); ctx.lineTo(cx, cy + radius * 0.18);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Zoom label top-left
+      const labelSize = Math.max(9, Math.min(12, radius * 0.18));
+      ctx.fillStyle = 'rgba(100,220,255,0.9)';
+      ctx.font = `bold ${labelSize}px monospace`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(`${zoom}×`, cx - radius + 6, cy - radius + 5);
+
+      // Name bottom-center
+      if (lens.name) {
+        ctx.fillStyle = 'rgba(100,220,255,0.65)';
+        ctx.font = `${Math.max(8, labelSize - 1)}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillText(lens.name, cx, cy + radius - 5);
+      }
+
+      // Resize handle (bottom-right quadrant)
+      const hx = cx + radius * 0.707, hy = cy + radius * 0.707;
+      ctx.beginPath();
+      ctx.arc(hx, hy, isSel ? 6 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(100,220,255,0.9)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // Draw lens ghost while drawing
+    if (_lensDragOp?.type === 'draw' && _lensDragOp.curX !== undefined) {
+      const { startX, startY, curX, curY } = _lensDragOp;
+      const r = Math.sqrt((curX - startX) ** 2 + (curY - startY) ** 2);
+      if (r > 5) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(startX, startY, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(100,220,255,0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
   function draw() {
     drawBackground();
     drawGrid();
@@ -2971,6 +3111,7 @@
     drawSelection();
     drawNotebookPins();
     drawHover();
+    drawLenses();
   }
 
   function updateHud() {
@@ -3163,7 +3304,7 @@
 
     state.canvasMode = mode;
 
-    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair" };
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell" };
     canvas.style.cursor = cursors[mode] || "default";
     if (mode !== "zone")  { state._zoneDrawing = null; state._zoneDragMode = null; }
     if (mode !== "force") { state._ffDrawing = null; state._ffDragMode = null; }
@@ -3180,6 +3321,10 @@
     // Sync forcePaintToggle in field panel
     const fpt = document.getElementById("forcePaintToggle");
     if (fpt) fpt.classList.toggle("rl-type-active", mode === "force");
+
+    // Sync lensDrawToggle
+    const ldt = document.getElementById("lensDrawToggle");
+    if (ldt) ldt.classList.toggle("rl-type-active", mode === "lens");
 
     // Update selInfo hint
     const selInfoEl = document.getElementById("selInfo");
@@ -3326,6 +3471,53 @@
       return;
     }
 
+    if (state.canvasMode === "lens") {
+      state.pointer.mode = "lens";
+      const rect2 = canvas.getBoundingClientRect();
+      const px = ev.clientX - rect2.left;
+      const py = ev.clientY - rect2.top;
+
+      if (ev.button === 2) {
+        // Right-click removes lens under cursor
+        state.lenses = state.lenses.filter(l => {
+          const dx = px - l.cx, dy = py - l.cy;
+          return Math.sqrt(dx * dx + dy * dy) > l.radius;
+        });
+        state._lensSelected = null;
+        _lensDragOp = null;
+        lensesPanelSync();
+        return;
+      }
+
+      // Check if clicking resize handle of a lens
+      for (const l of [...state.lenses].reverse()) {
+        if (l.visible === false) continue;
+        const hx = l.cx + l.radius * 0.707, hy = l.cy + l.radius * 0.707;
+        if (Math.sqrt((px - hx) ** 2 + (py - hy) ** 2) < 10) {
+          state._lensSelected = l.id;
+          _lensDragOp = { type: 'resize', id: l.id, startX: px, startY: py, origR: l.radius, origCx: l.cx, origCy: l.cy };
+          lensesPanelSync();
+          return;
+        }
+      }
+
+      // Check if clicking inside a lens (move)
+      for (const l of [...state.lenses].reverse()) {
+        if (l.visible === false) continue;
+        const dx = px - l.cx, dy = py - l.cy;
+        if (Math.sqrt(dx * dx + dy * dy) <= l.radius) {
+          state._lensSelected = l.id;
+          _lensDragOp = { type: 'move', id: l.id, startX: px, startY: py, origCx: l.cx, origCy: l.cy };
+          lensesPanelSync();
+          return;
+        }
+      }
+
+      // Start drawing a new lens
+      _lensDragOp = { type: 'draw', startX: px, startY: py, curX: px, curY: py };
+      return;
+    }
+
     // paint mode (default)
     state.pointer.mode = "paint";
     state.pointer.paintValue = ev.button === 2 ? 0 : (isAlive(gxgy.x, gxgy.y) ? 0 : 1);
@@ -3434,6 +3626,26 @@
       if (selInfoEl) selInfoEl.textContent = `${state.selection.w} × ${state.selection.h}`;
     }
 
+    if (state.pointer.mode === "lens" && _lensDragOp) {
+      const rect2 = canvas.getBoundingClientRect();
+      const px = ev.clientX - rect2.left;
+      const py = ev.clientY - rect2.top;
+      if (_lensDragOp.type === 'draw') {
+        _lensDragOp.curX = px;
+        _lensDragOp.curY = py;
+      } else if (_lensDragOp.type === 'move') {
+        const l = state.lenses.find(x => x.id === _lensDragOp.id);
+        if (l) { l.cx = _lensDragOp.origCx + (px - _lensDragOp.startX); l.cy = _lensDragOp.origCy + (py - _lensDragOp.startY); }
+      } else if (_lensDragOp.type === 'resize') {
+        const l = state.lenses.find(x => x.id === _lensDragOp.id);
+        if (l) {
+          const dr = Math.sqrt((px - _lensDragOp.origCx) ** 2 + (py - _lensDragOp.origCy) ** 2);
+          l.radius = Math.max(20, dr);
+        }
+      }
+      return;
+    }
+
     if (state.pointer.mode === "paint") {
       const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
       setCell(gxgy.x, gxgy.y, state.pointer.paintValue === 1);
@@ -3443,6 +3655,34 @@
   function handlePointerUp(ev) {
     if (canvas.hasPointerCapture(ev.pointerId)) {
       canvas.releasePointerCapture(ev.pointerId);
+    }
+
+    if (state.pointer.mode === "lens" && _lensDragOp) {
+      if (_lensDragOp.type === 'draw') {
+        const rect2 = canvas.getBoundingClientRect();
+        // (curX/curY already updated in move)
+        const r = Math.sqrt((_lensDragOp.curX - _lensDragOp.startX) ** 2 + (_lensDragOp.curY - _lensDragOp.startY) ** 2);
+        if (r >= 15) {
+          const newLens = {
+            id: ++_lensIdSeq,
+            name: `Lens ${_lensIdSeq}`,
+            cx: _lensDragOp.startX,
+            cy: _lensDragOp.startY,
+            radius: r,
+            zoom: _lensZoomDefault,
+            visible: true,
+          };
+          state.lenses.push(newLens);
+          state._lensSelected = newLens.id;
+          lensesPanelSync();
+        }
+      } else if (_lensDragOp.type === 'move' || _lensDragOp.type === 'resize') {
+        lensesPanelSync();
+      }
+      _lensDragOp = null;
+      state.pointer.mode = null;
+      state.pointer.down = false;
+      return;
     }
 
     if (state.pointer.mode === "move" && state._selMoving && state._selCells) {
@@ -3473,6 +3713,17 @@
     const rect = canvas.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
+
+    // If hovering over a lens, adjust lens zoom instead of camera zoom
+    for (const l of [...state.lenses].reverse()) {
+      if (l.visible === false) continue;
+      const dx = mx - l.cx, dy = my - l.cy;
+      if (Math.sqrt(dx * dx + dy * dy) <= l.radius) {
+        l.zoom = Math.max(1, Math.min(16, l.zoom + (ev.deltaY < 0 ? 1 : -1)));
+        lensesPanelSync();
+        return;
+      }
+    }
 
     const before = screenToWorld(mx, my);
     const zoomFactor = ev.deltaY < 0 ? 1.1 : 0.9;
@@ -3930,6 +4181,8 @@
         if (state.canvasMode !== "select") state.selection = null;
       } else if (ev.key.toLowerCase() === "v" && !mod) {
         setCanvasMode(state.canvasMode === "force" ? "paint" : "force");
+      } else if (ev.key.toLowerCase() === "l" && !mod) {
+        setCanvasMode(state.canvasMode === "lens" ? "paint" : "lens");
       } else if (ev.key === "Escape") {
         setCanvasMode("paint");
         state.selection = null;
@@ -5199,6 +5452,370 @@
     });
   }
 
+  // ── Lens Lab ─────────────────────────────────────────────────────────────
+  function lensesPanelSync() {
+    const list = document.getElementById("lensList");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const l of state.lenses) {
+      const card = document.createElement("div");
+      card.className = "lens-card" + (l.id === state._lensSelected ? " lens-card-selected" : "");
+
+      const nameEl = document.createElement("input");
+      nameEl.className = "lens-card-name";
+      nameEl.value = l.name;
+      nameEl.spellcheck = false;
+      nameEl.addEventListener("change", () => { l.name = nameEl.value; });
+
+      const zoomBadge = document.createElement("span");
+      zoomBadge.className = "lens-zoom-badge";
+      zoomBadge.textContent = `${l.zoom}×`;
+
+      const eyeBtn = document.createElement("button");
+      eyeBtn.className = "zone-del-btn";
+      eyeBtn.title = l.visible === false ? "Show" : "Hide";
+      eyeBtn.textContent = l.visible === false ? "🙈" : "👁";
+      eyeBtn.addEventListener("click", () => { l.visible = !l.visible; lensesPanelSync(); });
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "zone-del-btn";
+      delBtn.title = "Delete";
+      delBtn.textContent = "✕";
+      delBtn.addEventListener("click", () => {
+        state.lenses = state.lenses.filter(x => x.id !== l.id);
+        if (state._lensSelected === l.id) state._lensSelected = null;
+        lensesPanelSync();
+      });
+
+      card.addEventListener("click", (e) => {
+        if ([nameEl, eyeBtn, delBtn].includes(e.target)) return;
+        state._lensSelected = l.id;
+        lensesPanelSync();
+      });
+
+      card.appendChild(nameEl);
+      card.appendChild(zoomBadge);
+      card.appendChild(eyeBtn);
+      card.appendChild(delBtn);
+      list.appendChild(card);
+    }
+    if (state.lenses.length === 0) {
+      const msg = document.createElement("p");
+      msg.style.cssText = "font-size:11px;color:var(--muted);margin:4px 0";
+      msg.textContent = "Draw a lens on the canvas, or click Lens mode and drag.";
+      list.appendChild(msg);
+    }
+  }
+
+  function setupLensLab() {
+    const toggleBtn = document.getElementById("lensDrawToggle");
+    const zoomEl = document.getElementById("lensZoomDefault");
+    const zoomOut = document.getElementById("lensZoomDefaultOut");
+    if (!toggleBtn) return;
+
+    toggleBtn.addEventListener("click", () => {
+      setCanvasMode(state.canvasMode === "lens" ? "paint" : "lens");
+    });
+    if (zoomEl) {
+      zoomEl.addEventListener("input", () => {
+        _lensZoomDefault = Number(zoomEl.value);
+        if (zoomOut) zoomOut.textContent = `${_lensZoomDefault}×`;
+      });
+    }
+    lensesPanelSync();
+  }
+
+  // ── Sidebar (VSCode-style) ───────────────────────────────────────────────
+  function _setSidebarCollapsed(collapse) {
+    _sidebarCollapsed = collapse;
+    const workspace = document.getElementById("workspaceGrid");
+    const sidebarContent = document.getElementById("sidebarContent");
+    if (sidebarContent) sidebarContent.classList.toggle("sc-hidden", collapse);
+    if (workspace) {
+      workspace.classList.toggle("sidebar-collapsed", collapse);
+      if (!collapse) workspace.style.setProperty("--right-w", _rightW + "px");
+    }
+    resizeCanvas();
+  }
+
+  function initPaneResizers() {
+    const workspace = document.getElementById("workspaceGrid");
+    const sidebarContent = document.getElementById("sidebarContent");
+    const sidebarResizer = document.getElementById("sidebarResizer");
+
+    // Activity bar tab switching
+    document.querySelectorAll(".abar-btn[data-stab]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.stab;
+        const alreadyActive = btn.classList.contains("abar-active");
+        if (alreadyActive && !_sidebarCollapsed) {
+          _setSidebarCollapsed(true);
+          return;
+        }
+        document.querySelectorAll(".abar-btn").forEach(b => b.classList.toggle("abar-active", b === btn));
+        document.querySelectorAll(".stab-panel").forEach(p => { p.style.display = "none"; });
+        const panel = document.getElementById("stab" + tab.charAt(0).toUpperCase() + tab.slice(1));
+        if (panel) panel.style.display = "";
+        if (_sidebarCollapsed) _setSidebarCollapsed(false);
+      });
+    });
+
+    // Sidebar drag resize
+    if (sidebarResizer && workspace) {
+      let dragging = false;
+      sidebarResizer.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        sidebarResizer.setPointerCapture(e.pointerId);
+        sidebarResizer.classList.add("dragging");
+        e.preventDefault();
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const rect = workspace.getBoundingClientRect();
+        const newW = Math.max(200, Math.min(640, rect.right - e.clientX));
+        _rightW = newW;
+        workspace.style.setProperty("--right-w", newW + "px");
+        resizeCanvas();
+      });
+      document.addEventListener("pointerup", () => {
+        if (dragging) { dragging = false; sidebarResizer.classList.remove("dragging"); }
+      });
+    }
+
+    // Bottom panel drag resize
+    const bottomResizer = document.getElementById("bottomResizer");
+    const scriptPanel = document.getElementById("scriptPanel");
+    if (bottomResizer && scriptPanel) {
+      let dragging = false;
+      let startY = 0, startH = 0;
+      bottomResizer.addEventListener("pointerdown", (e) => {
+        if (scriptPanel.classList.contains("bp-collapsed")) return;
+        dragging = true;
+        startY = e.clientY;
+        startH = scriptPanel.getBoundingClientRect().height;
+        bottomResizer.setPointerCapture(e.pointerId);
+        bottomResizer.classList.add("dragging");
+        e.preventDefault();
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const newH = Math.max(80, Math.min(600, startH - (e.clientY - startY)));
+        scriptPanel.style.setProperty("--bottom-h", newH + "px");
+        scriptPanel.style.flex = `0 0 ${newH}px`;
+      });
+      document.addEventListener("pointerup", () => {
+        if (dragging) { dragging = false; bottomResizer.classList.remove("dragging"); }
+      });
+    }
+
+    // Script Kernel toggle
+    function _toggleScriptPanel() {
+      const panel = document.getElementById("scriptPanel");
+      const btn = document.getElementById("scriptDrawerToggle");
+      if (!panel) return;
+      const collapsed = panel.classList.toggle("bp-collapsed");
+      if (btn) btn.textContent = collapsed ? "▲" : "▼";
+    }
+    document.getElementById("scriptHandle")?.addEventListener("click", (e) => {
+      if (e.target.closest(".sc-btn")) return;
+      _toggleScriptPanel();
+    });
+    document.getElementById("scriptDrawerToggle")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _toggleScriptPanel();
+    });
+  }
+
+  // ── Script Kernel ────────────────────────────────────────────────────────
+  function _updateHooksBadge() {
+    const badge = document.getElementById("hooksActiveBadge");
+    if (!badge) return;
+    const total = Object.values(_kernel.hooks).reduce((s, h) => s + h.size, 0);
+    badge.textContent = `${total} hook${total !== 1 ? "s" : ""}`;
+    badge.style.display = total > 0 ? "" : "none";
+  }
+
+  function _saveScript() {
+    try {
+      const data = _scriptCells.map(c => ({ code: c.ta ? c.ta.value : c.code || "" }));
+      localStorage.setItem(LS_SCRIPT, JSON.stringify(data));
+    } catch (_) {}
+  }
+
+  function _loadScript() {
+    try {
+      const raw = localStorage.getItem(LS_SCRIPT);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      for (const { code } of data) _addCell(code);
+    } catch (_) {}
+  }
+
+  function _addCell(code = "") {
+    const id = ++_scriptIdSeq;
+    const cell = { id, code, _hookCleanups: [] };
+    _scriptCells.push(cell);
+
+    const container = document.getElementById("scriptCells");
+    if (!container) return cell;
+
+    const wrap = document.createElement("div");
+    wrap.className = "sc-cell";
+    wrap.dataset.cellId = id;
+
+    const bar = document.createElement("div");
+    bar.className = "sc-cell-bar";
+    const label = document.createElement("span");
+    label.className = "sc-cell-label";
+    label.textContent = `cell ${id}`;
+
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "sc-btn";
+    expandBtn.textContent = "↕";
+    expandBtn.title = "Expand/collapse";
+    expandBtn.addEventListener("click", () => wrap.classList.toggle("sc-expanded"));
+
+    const runBtn = document.createElement("button");
+    runBtn.className = "sc-btn";
+    runBtn.textContent = "▶";
+    runBtn.title = "Run (Shift+Enter)";
+    runBtn.addEventListener("click", () => _runCell(id));
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "sc-btn sc-btn-danger";
+    delBtn.textContent = "✕";
+    delBtn.title = "Delete cell";
+    delBtn.addEventListener("click", () => _deleteCell(id));
+
+    bar.appendChild(label);
+    bar.appendChild(expandBtn);
+    bar.appendChild(runBtn);
+    bar.appendChild(delBtn);
+
+    const editorWrap = document.createElement("div");
+    editorWrap.className = "sc-editor-wrap";
+    const ta = document.createElement("textarea");
+    ta.value = code;
+    ta.spellcheck = false;
+    ta.autocomplete = "off";
+    ta.placeholder = "// sdk, cells, rules, sim, canvas, globals, print\n// Shift+Enter to run";
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); _runCell(id); }
+    });
+    ta.addEventListener("input", () => { cell.code = ta.value; _saveScript(); });
+    cell.ta = ta;
+    editorWrap.appendChild(ta);
+
+    const output = document.createElement("div");
+    output.className = "sc-output";
+    output.style.display = "none";
+    cell._output = output;
+
+    wrap.appendChild(bar);
+    wrap.appendChild(editorWrap);
+    wrap.appendChild(output);
+    container.appendChild(wrap);
+    cell._elem = wrap;
+
+    ta.focus();
+    return cell;
+  }
+
+  function _deleteCell(id) {
+    const idx = _scriptCells.findIndex(c => c.id === id);
+    if (idx === -1) return;
+    const cell = _scriptCells[idx];
+    cell._hookCleanups.forEach(fn => fn());
+    _scriptCells.splice(idx, 1);
+    cell._elem?.remove();
+    _updateHooksBadge();
+    _saveScript();
+  }
+
+  async function _runCell(id) {
+    const cell = _scriptCells.find(c => c.id === id);
+    if (!cell) return;
+    // Clean previous hooks
+    cell._hookCleanups.forEach(fn => fn());
+    cell._hookCleanups = [];
+
+    const code = cell.ta ? cell.ta.value : (cell.code || "");
+    const out = cell._output;
+    if (out) { out.style.display = "none"; out.textContent = ""; out.className = "sc-output"; }
+
+    const printFn = (...args) => {
+      if (!out) return;
+      out.style.display = "";
+      out.textContent += args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ") + "\n";
+    };
+
+    const sdkHook = (hookName, fn) => {
+      _kernel.hooks[hookName]?.add(fn);
+      cell._hookCleanups.push(() => _kernel.hooks[hookName]?.delete(fn));
+      _updateHooksBadge();
+    };
+
+    const sdkCells = {
+      get size() { return activeAlive().size; },
+      add(col, row) { setCell(col, row, true); },
+      remove(col, row) { setCell(col, row, false); },
+      fill(x, y, w, h, density = 1) {
+        for (let r = y; r < y + h; r++) for (let c = x; c < x + w; c++)
+          if (Math.random() < density) setCell(c, r, true);
+      },
+      clear() { clearBoard(); },
+      forEach(fn) { for (const k of activeAlive()) { const [c, r] = parseKey(k); fn(c, r); } },
+    };
+    const sdkRules = {
+      get birth() { return [...state.ruleB].sort((a, b) => a - b); },
+      get survival() { return [...state.ruleS].sort((a, b) => a - b); },
+      set(B, S) { state.ruleB = new Set(B); state.ruleS = new Set(S); state._ruleDirty = true; },
+      toString() { return ruleToString(state.ruleB, state.ruleS); },
+    };
+    const sdkSim = {
+      get generation() { return state.generation; },
+      step(n = 1) { for (let i = 0; i < n; i++) tickForward(); },
+      play() { if (!state.running) { state.running = true; document.getElementById("playBtn").textContent = "Pause"; } },
+      pause() { if (state.running) { state.running = false; document.getElementById("playBtn").textContent = "Play"; } },
+      get running() { return state.running; },
+    };
+    const sdkCanvas = { get ctx() { return ctx; }, get width() { return canvas.width / (window.devicePixelRatio || 1); }, get height() { return canvas.height / (window.devicePixelRatio || 1); } };
+
+    try {
+      const fn = new Function("cells", "rules", "sim", "canvas", "globals", "hook", "log", "print", `"use strict"; return (async () => { ${code} })()`);
+      await fn(sdkCells, sdkRules, sdkSim, sdkCanvas, _kernel.globals, sdkHook, printFn, printFn);
+      if (out && out.textContent === "") out.style.display = "none";
+    } catch (err) {
+      if (out) { out.style.display = ""; out.textContent = String(err); out.className = "sc-output sc-err"; }
+    }
+    _updateHooksBadge();
+  }
+
+  function setupScriptKernel() {
+    document.getElementById("scriptAddCell")?.addEventListener("click", () => {
+      _addCell();
+      document.getElementById("scriptPanel")?.classList.remove("bp-collapsed");
+      const btn = document.getElementById("scriptDrawerToggle");
+      if (btn) btn.textContent = "▼";
+    });
+    document.getElementById("scriptRunAll")?.addEventListener("click", async () => {
+      for (const cell of _scriptCells) await _runCell(cell.id);
+    });
+    document.getElementById("scriptClearHooks")?.addEventListener("click", () => {
+      for (const cell of _scriptCells) { cell._hookCleanups.forEach(fn => fn()); cell._hookCleanups = []; }
+      for (const k of Object.keys(_kernel.hooks)) _kernel.hooks[k].clear();
+      _updateHooksBadge();
+    });
+    document.getElementById("scriptClearAll")?.addEventListener("click", () => {
+      [..._scriptCells].map(c => c.id).forEach(id => _deleteCell(id));
+    });
+
+    _loadScript();
+    if (_scriptCells.length === 0) {
+      _addCell("// Script Kernel\n// sdk: cells, rules, sim, canvas, globals, hook, log\n// Shift+Enter runs · ↕ expands\nlog('pop:', cells.size, '  gen:', sim.generation);");
+    }
+  }
+
   function setupCaptureLab() {
     const selModeBtn = document.getElementById("selModeBtn");
     const selInfoEl = document.getElementById("selInfo");
@@ -5738,6 +6355,7 @@
     setupEvoLab();
     setupZoneLab();
     setupFieldLab();
+    setupLensLab();
     setupLibrary();
     setupCaptureLab();
     setupAnalysisLab();
@@ -5748,6 +6366,7 @@
       paletteSearchEl.addEventListener("input", () => buildPalette(paletteSearchEl.value));
     }
     initPaneResizers();
+    setupScriptKernel();
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
