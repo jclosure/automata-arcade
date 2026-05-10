@@ -44,9 +44,10 @@ Or hit the [Live Demo](https://automata-arcade.vercel.app) directly.
 |---|---|
 | 🎨 **Sandbox** | Infinite flat grid — draw, drop prefabs, experiment |
 | 🏆 **Arcade** | 9 structured missions with scoring, zones, and win states |
-| 🎓 **Circuit Academy** | 4 guided tutorial levels that teach GoL signal logic |
+| 🎓 **Circuit Academy** | 7 guided tutorial levels that teach GoL signal logic |
 | 🌐 **3D Manifolds** | Live GoL on a sphere, torus, Klein bottle, Möbius strip, cylinder |
 | ⏱️ **Time Machine** | Full history playhead — scrub, rewind, replay any moment |
+| 📓 **Notebook** | Live research journal — auto-detection, snapshots, pins, timeline markers, cinematic scenes |
 | 📦 **Prefab Palette** | 30+ drag-and-drop patterns across Required, Custom, and Circuit categories |
 
 ---
@@ -59,10 +60,10 @@ The main canvas is a pan-and-zoom 2D grid running Conway's B3/S23 rules.
 
 | Action | Result |
 |---|---|
-| Left-click / drag | Paint cells alive |
-| Right-click / drag | Erase cells |
+| Left-click / drag | Paint or act in current mode |
+| Right-click / drag | Erase cells (paint mode) |
 | Scroll wheel | Zoom in / out |
-| Space + drag | Pan the view |
+| Drag in Move mode (`M`) | Pan the view |
 | Drag palette card → board | Place a prefab |
 | Right-drag on sphere | Rotate the 3D view |
 
@@ -231,6 +232,9 @@ A guided practice range that teaches GoL signal logic from first principles. Eac
 | CA-2 | **Signal Stop** | Eater-1 as a signal terminator | Place an Eater to protect the red danger zone |
 | CA-3 | **Parallel Streams** | Independent streams don't interfere | Watch — two guns, two receptors |
 | CA-4 | **Not Today** | Head-on annihilation = NOT gate | Watch — two opposing guns cancel every glider pair |
+| CA-5 | **OR Gate** | Either stream reaching the receptor is a 1 | Watch — two guns feed one receptor |
+| CA-6 | **AND Gate** | Both streams must reach the receptor | Route both signals to a shared zone |
+| CA-7 | **Signal Crossing** | Perpendicular streams cross without cancelling | Watch — SE and SW streams cross at the centre |
 
 #### How the NOT gate works
 
@@ -352,12 +356,12 @@ npm start       # alias for serve
 
 ## Roadmap ideas
 
-- [ ] Export / import board state as RLE or plaintext Life format
-- [ ] Rule editor (try HighLife B36/S23, Seeds B2/S, Day & Night B3678/S34678)
-- [ ] Pattern search / period detector
-- [ ] Notebook layer — annotate discoveries, save named sessions
+- [x] Export / import board state as RLE or plaintext Life format
+- [x] Rule editor (try HighLife B36/S23, Seeds B2/S, Day & Night B3678/S34678)
+- [x] Pattern search / period detector
+- [x] Notebook layer — annotate discoveries, save named sessions
+- [x] More Circuit Academy levels: AND gate, OR gate, signal crossing (CA-5 through CA-7)
 - [ ] WebAssembly core for large boards (10,000+ live cells without slowdown)
-- [ ] More Circuit Academy levels: AND gate, OR gate, signal crossing
 
 ---
 
