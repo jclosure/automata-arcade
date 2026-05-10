@@ -120,13 +120,19 @@
     adaptTarget: 400,
     adaptRate: 80,
     _adaptPrevPop: 0,
-    rulesZoneEnabled: false,
-    rulesZoneAxis: "x",
-    rulesZoneOffset: 0,
-    rulesZoneRuleB2: new Set([3, 6]),
-    rulesZoneRuleS2: new Set([2, 3]),
+    zones: [],             // [{id,x,y,w,h,ruleB,ruleS,name,color}] in grid coords
+    _zoneIdSeq: 0,
+    _zoneSelected: null,   // id of selected zone
+    _zoneDrawing: null,    // {x0,y0,x1,y1} while drag-drawing
+    _zoneDragMode: null,   // null | "move" | "resize-nw"|"resize-n"|...|"resize-se"
+    _zoneDragOrigin: null, // {mx,my,zx,zy,zw,zh} snapshot at drag start
     forceFields: [],
-    canvasMode: "paint",  // "paint" | "move" | "select" | "force"
+    _ffIdSeq: 0,
+    _ffSelected: null,
+    _ffDragMode: null,   // null | "move" | "resize" | "draw"
+    _ffDragOrigin: null, // snapshot at drag start
+    _ffDrawing: null,    // {cx,cy,r} while drag-drawing
+    canvasMode: "paint",  // "paint" | "move" | "select" | "force" | "zone"
     forcePaintType: "attract",
     forcePaintRadius: 15,
     forcePaintStrength: 3,
@@ -167,7 +173,9 @@
   const SPHERE_ROWS = 90;
   const MAX_HIST = 600;
   const SPEED_TIERS = [1, 2, 4, 8, 15, 25, 30];
-  const SPEED_LABELS = ["1×", "2×", "4×", "8×", "15×", "25×", "30×"];
+  const SPEED_LABELS  = ["1×", "2×", "4×", "8×", "15×", "25×", "30×"];
+  const ZONE_COLORS   = ['#ff6b9d','#ffa96b','#6bffa9','#6bbfff','#c56bff','#ffe06b','#ff6b6b','#6bffee'];
+  const _ffExpanded   = new Set();  // field IDs with detail panel open
   const NB_COLORS = ['#5be0bc', '#f2b84b', '#e05b7a', '#9b7be8', '#5bc4e0', '#e0c45b'];
   const LS_NOTEBOOK = 'aa_notebook';
 
@@ -1548,16 +1556,46 @@
   }
 
   function getFieldBonus(col, row) {
-    let bonus = 0;
+    let stackBonus = 0;
+    let exclBonus = 0, exclMag = 0;
     for (const ff of state.forceFields) {
+      if (ff.visible === false) continue;
       const dist = Math.sqrt((col - ff.x) ** 2 + (row - ff.y) ** 2);
-      if (dist < ff.radius) {
-        const t = 1 - dist / ff.radius;
-        const delta = Math.round(ff.strength * t);
-        bonus += ff.type === "attract" ? delta : -delta;
+      if (dist >= ff.radius) continue;
+      const u = dist / ff.radius;
+      let t;
+      if (ff.falloff === "bell")      t = Math.exp(-3 * u * u);
+      else if (ff.falloff === "step") t = 1;
+      else                            t = 1 - u;
+      const delta = Math.round(ff.strength * t);
+      const contribution = ff.type === "attract" ? delta : -delta;
+      if (ff.combine === false) {
+        // Exclusive: strongest exclusive wins
+        if (Math.abs(contribution) > exclMag) { exclBonus = contribution; exclMag = Math.abs(contribution); }
+      } else {
+        stackBonus += contribution;
       }
     }
-    return bonus;
+    // If any exclusive field covers this cell, it takes over; otherwise sum stacking fields
+    return exclMag > 0 ? exclBonus : stackBonus;
+  }
+
+  function _fieldDensity(ff) {
+    const alive = activeAlive();
+    let inside = 0, area = 0;
+    const r2 = ff.radius * ff.radius;
+    // sample a bounding box — count cells inside radius
+    const x0 = Math.floor(ff.x - ff.radius), x1 = Math.ceil(ff.x + ff.radius);
+    const y0 = Math.floor(ff.y - ff.radius), y1 = Math.ceil(ff.y + ff.radius);
+    for (let c = x0; c <= x1; c++) {
+      for (let r = y0; r <= y1; r++) {
+        if ((c - ff.x) ** 2 + (r - ff.y) ** 2 < r2) {
+          area++;
+          if (alive.has(key(c, r))) inside++;
+        }
+      }
+    }
+    return area > 0 ? inside / area : 0;
   }
 
   function applyDrift(aliveSet, ageMap, tMap) {
@@ -1595,6 +1633,8 @@
     const s = [...S].sort((a, x) => a - x).join("");
     return `B${b}/S${s}`;
   }
+  // Short alias used in zone rendering (avoids circular ref issues in IIFE order)
+  function _ruleToStr(B, S) { return ruleToString(B, S); }
 
   function parseRule(str) {
     const m = str.toUpperCase().match(/^B([0-8]*)\/?S([0-8]*)$/);
@@ -1784,11 +1824,17 @@
 
     // Growth function: Gaussian around mu
     const nextMap = new Map();
+    const hasFields = state.forceFields.length > 0;
     for (const [k, sum] of neighborSums) {
       const u = sum / nCount;
       const g = Math.exp(-0.5 * ((u - mu) / sigma) ** 2);
       const old = valueMap.get(k) ?? 0;
-      const nv = Math.max(0, Math.min(1, old + dt * (2 * g - 1)));
+      let growth = 2 * g - 1;
+      if (hasFields) {
+        const [c, r] = parseKey(k);
+        growth += getFieldBonus(c, r) / 10; // attract pushes toward growth, repel toward decay
+      }
+      const nv = Math.max(0, Math.min(1, old + dt * growth));
       if (nv > THRESH) nextMap.set(k, nv);
     }
 
@@ -1903,9 +1949,9 @@
       const densityBonus = state.densityFeedback
         ? Math.sign(state.densityTarget - alive.size) * state.densityStrength
         : 0;
-      const hasZone   = state.rulesZoneEnabled;
+      const hasZones  = state.zones.length > 0;
       const hasFields = state.forceFields.length > 0;
-      const adjusted  = densityBonus !== 0 || hasZone || hasFields;
+      const adjusted  = densityBonus !== 0 || hasZones || hasFields;
 
       if (!adjusted) {
         const born = state.ruleB;
@@ -1919,11 +1965,24 @@
       } else {
         for (const [k, n] of neighborCounts) {
           const [col, row] = parseKey(k);
-          const inZone2 = hasZone && (state.rulesZoneAxis === "x"
-            ? col >= state.rulesZoneOffset
-            : row >= state.rulesZoneOffset);
-          const born    = inZone2 ? state.rulesZoneRuleB2 : state.ruleB;
-          const survive = inZone2 ? state.rulesZoneRuleS2 : state.ruleS;
+          // Zones: last non-combining zone wins; combining zones union their rules on top
+          let born = state.ruleB, survive = state.ruleS;
+          if (hasZones) {
+            let unionB = null, unionS = null;
+            for (const z of state.zones) {
+              if (col >= z.x && col < z.x + z.w && row >= z.y && row < z.y + z.h) {
+                if (z.combine) {
+                  if (!unionB) { unionB = new Set(born); unionS = new Set(survive); }
+                  for (const b of z.ruleB) unionB.add(b);
+                  for (const s of z.ruleS) unionS.add(s);
+                } else {
+                  born = z.ruleB; survive = z.ruleS;
+                  unionB = null; unionS = null; // reset union on each exclusive zone
+                }
+              }
+            }
+            if (unionB) { born = unionB; survive = unionS; }
+          }
           const adj = Math.max(0, n + (hasFields ? getFieldBonus(col, row) : 0) + densityBonus);
           if (born.has(adj) || (alive.has(k) && survive.has(adj))) {
             next.add(k);
@@ -2748,53 +2807,120 @@
   }
 
   function drawZoneBoundary() {
-    if (!state.rulesZoneEnabled) return;
+    if (state.zones.length === 0 && !state._zoneDrawing) return;
     ctx.save();
-    ctx.strokeStyle = "rgba(242,184,75,0.45)";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-    if (state.rulesZoneAxis === "x") {
-      const sx = worldToScreen(state.rulesZoneOffset, 0).x;
-      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, canvas.height); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = "rgba(242,184,75,0.6)"; ctx.font = "11px monospace";
-      ctx.fillText("Zone 1", Math.max(4, sx - 54), 14);
-      ctx.fillText("Zone 2", sx + 5, 14);
-    } else {
-      const sy = worldToScreen(0, state.rulesZoneOffset).y;
-      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(canvas.width, sy); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = "rgba(242,184,75,0.6)"; ctx.font = "11px monospace";
-      ctx.fillText("Zone 1", 6, Math.max(14, sy - 4));
-      ctx.fillText("Zone 2", 6, sy + 14);
+    ctx.font = "bold 11px monospace";
+
+    // Committed zones
+    for (const z of state.zones) {
+      if (z.visible === false) continue;
+      const tl = worldToScreen(z.x, z.y);
+      const br = worldToScreen(z.x + z.w, z.y + z.h);
+      const sw = br.x - tl.x, sh = br.y - tl.y;
+      const isSelected = z.id === state._zoneSelected;
+      const hex = z.color;
+
+      // Fill
+      ctx.fillStyle = hex + (isSelected ? '28' : '18');
+      ctx.fillRect(tl.x, tl.y, sw, sh);
+
+      // Border
+      ctx.strokeStyle = hex + (isSelected ? 'cc' : '88');
+      ctx.lineWidth = isSelected ? 2 : 1.5;
+      ctx.setLineDash(isSelected ? [] : [5, 3]);
+      ctx.strokeRect(tl.x, tl.y, sw, sh);
+      ctx.setLineDash([]);
+
+      // Label
+      ctx.fillStyle = hex + 'dd';
+      const label = z.name + '  ' + _ruleToStr(z.ruleB, z.ruleS);
+      if (sw > 40 && sh > 14) ctx.fillText(label, tl.x + 4, tl.y + 13);
+
+      // Resize handles when selected
+      if (isSelected) {
+        const HANDLE = 7;
+        const hpts = [
+          [tl.x, tl.y], [tl.x + sw/2, tl.y], [br.x, tl.y],
+          [tl.x, tl.y + sh/2],                 [br.x, tl.y + sh/2],
+          [tl.x, br.y], [tl.x + sw/2, br.y],   [br.x, br.y],
+        ];
+        ctx.fillStyle = hex + 'ff';
+        for (const [hx, hy] of hpts) {
+          ctx.fillRect(hx - HANDLE/2, hy - HANDLE/2, HANDLE, HANDLE);
+        }
+      }
     }
+
+    // In-progress drag ghost
+    if (state._zoneDrawing) {
+      const d = state._zoneDrawing;
+      const x1 = Math.min(d.x0, d.x1), y1 = Math.min(d.y0, d.y1);
+      const x2 = Math.max(d.x0, d.x1), y2 = Math.max(d.y0, d.y1);
+      const tl = worldToScreen(x1, y1);
+      const br = worldToScreen(x2 + 1, y2 + 1);
+      ctx.fillStyle = 'rgba(255,224,107,0.15)';
+      ctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+      ctx.strokeStyle = 'rgba(255,224,107,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+      ctx.setLineDash([]);
+    }
+
     ctx.restore();
   }
 
+  function _ffScreenCenter(ff) {
+    const sc = worldToScreen(ff.x, ff.y);
+    return { cx: sc.x + state.zoom * 0.5, cy: sc.y + state.zoom * 0.5 };
+  }
+
   function drawForceFields() {
-    if (state.forceFields.length === 0 && (!state.canvasMode === "force" || !state.hoverCell)) return;
+    if (state.forceFields.length === 0 && !state._ffDrawing) return;
+    ctx.save();
+    ctx.font = "bold 10px monospace";
+
     for (const ff of state.forceFields) {
-      const sc = worldToScreen(ff.x, ff.y);
-      const cx = sc.x + state.zoom * 0.5;
-      const cy = sc.y + state.zoom * 0.5;
-      const r  = ff.radius * state.zoom;
+      if (ff.visible === false) continue;
+      const { cx, cy } = _ffScreenCenter(ff);
+      const r   = ff.radius * state.zoom;
       const rgb = ff.type === "attract" ? "91,224,188" : "255,107,107";
+      const isSel = ff.id === state._ffSelected;
+
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${rgb},0.07)`; ctx.fill();
-      ctx.strokeStyle = `rgba(${rgb},0.5)`; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = `rgba(${rgb},${isSel ? 0.12 : 0.06})`; ctx.fill();
+      ctx.strokeStyle = `rgba(${rgb},${isSel ? 0.9 : 0.45})`;
+      ctx.lineWidth = isSel ? 2 : 1.5;
+      ctx.setLineDash(isSel ? [] : [5, 3]);
+      ctx.stroke(); ctx.setLineDash([]);
+
+      // Center dot
       ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${rgb},0.9)`; ctx.fill();
+
+      // Label
+      ctx.fillStyle = `rgba(${rgb},0.85)`;
+      const label = (ff.name || (ff.type === "attract" ? "Attract" : "Repel")) + `  ×${ff.strength}`;
+      ctx.fillText(label, cx + 6, cy - 6);
+
+      // Resize handle at rightmost point of circle
+      if (isSel) {
+        ctx.beginPath(); ctx.arc(cx + r, cy, 5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${rgb},1)`; ctx.fill();
+      }
     }
-    if (state.canvasMode === "force" && state.hoverCell) {
-      const sc  = worldToScreen(state.hoverCell.x, state.hoverCell.y);
-      const cx  = sc.x + state.zoom * 0.5;
-      const cy  = sc.y + state.zoom * 0.5;
-      const r   = state.forcePaintRadius * state.zoom;
+
+    // Draw ghost while drag-drawing a new field
+    if (state._ffDrawing) {
+      const d = state._ffDrawing;
       const rgb = state.forcePaintType === "attract" ? "91,224,188" : "255,107,107";
-      ctx.save();
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${rgb},0.7)`; ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]); ctx.stroke();
-      ctx.restore();
+      ctx.beginPath(); ctx.arc(d.cx, d.cy, Math.max(2, d.r), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${rgb},0.1)`; ctx.fill();
+      ctx.strokeStyle = `rgba(${rgb},0.75)`; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
     }
+
+    ctx.restore();
   }
 
   function drawSelection() {
@@ -2968,7 +3094,7 @@
       draw();
     }
     updateTimeline();
-
+    _updateFieldDensityBars();
     updateHud();
     requestAnimationFrame(runTick);
   }
@@ -3037,8 +3163,10 @@
 
     state.canvasMode = mode;
 
-    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair" };
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair" };
     canvas.style.cursor = cursors[mode] || "default";
+    if (mode !== "zone")  { state._zoneDrawing = null; state._zoneDragMode = null; }
+    if (mode !== "force") { state._ffDrawing = null; state._ffDragMode = null; }
 
     // Sync mode buttons
     document.querySelectorAll(".mode-btn").forEach((btn) => {
@@ -3066,6 +3194,49 @@
     state.pointer.down = true;
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
+
+    // Zone mode: draw / select / move / resize zones
+    if (state.canvasMode === "zone" && ev.button === 0) {
+      const rect = canvas.getBoundingClientRect();
+      const gxy  = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      const gx   = Math.floor(gxy.x), gy = Math.floor(gxy.y);
+
+      // Check if clicking a handle or body of selected zone
+      const selZ = state.zones.find(z => z.id === state._zoneSelected);
+      if (selZ) {
+        const handle = _zoneHitHandle(ev.clientX - rect.left, ev.clientY - rect.top, selZ);
+        if (handle) {
+          state._zoneDragMode   = handle;
+          state._zoneDragOrigin = { mx: gx, my: gy, zx: selZ.x, zy: selZ.y, zw: selZ.w, zh: selZ.h };
+          ev.preventDefault(); return;
+        }
+        if (gx >= selZ.x && gx < selZ.x + selZ.w && gy >= selZ.y && gy < selZ.y + selZ.h) {
+          state._zoneDragMode   = "move";
+          state._zoneDragOrigin = { mx: gx, my: gy, zx: selZ.x, zy: selZ.y, zw: selZ.w, zh: selZ.h };
+          ev.preventDefault(); return;
+        }
+      }
+
+      // Try selecting another zone (last drawn on top wins)
+      let hit = null;
+      for (let i = state.zones.length - 1; i >= 0; i--) {
+        const z = state.zones[i];
+        if (gx >= z.x && gx < z.x + z.w && gy >= z.y && gy < z.y + z.h) { hit = z; break; }
+      }
+      if (hit) {
+        state._zoneSelected = hit.id;
+        state._zoneDragMode   = "move";
+        state._zoneDragOrigin = { mx: gx, my: gy, zx: hit.x, zy: hit.y, zw: hit.w, zh: hit.h };
+        zonesPanelSync();
+        ev.preventDefault(); return;
+      }
+
+      // Otherwise start drawing a new zone
+      state._zoneSelected = null;
+      state._zoneDrawing  = { x0: gx, y0: gy, x1: gx, y1: gy };
+      state._zoneDragMode = "draw";
+      ev.preventDefault(); return;
+    }
 
     // Notebook pin drop mode intercepts left-click
     if (state.notebook.pinMode && ev.button === 0) {
@@ -3135,20 +3306,23 @@
       return;
     }
 
-    if (state.canvasMode === "force") {
-      state.pointer.mode = null;
-      if (ev.button === 2) {
-        state.forceFields = state.forceFields.filter((ff) =>
-          Math.sqrt((gxgy.x - ff.x) ** 2 + (gxgy.y - ff.y) ** 2) > ff.radius * 0.5);
+    if (state.canvasMode === "force" && ev.button === 0) {
+      ev.preventDefault();
+      const rect4 = canvas.getBoundingClientRect();
+      const sx4 = ev.clientX - rect4.left, sy4 = ev.clientY - rect4.top;
+      const hit = _ffHitTest(sx4, sy4);
+      if (hit) {
+        state._ffSelected = hit.field.id;
+        state._ffDragMode = hit.mode;
+        const { cx, cy } = _ffScreenCenter(hit.field);
+        state._ffDragOrigin = { sx: sx4, sy: sy4, fx: hit.field.x, fy: hit.field.y, fr: hit.field.radius, cx, cy };
+        fieldsPanelSync();
       } else {
-        state.forceFields.push({
-          id: Date.now() + Math.random(),
-          x: gxgy.x, y: gxgy.y,
-          radius: state.forcePaintRadius,
-          strength: state.forcePaintStrength,
-          type: state.forcePaintType,
-        });
+        state._ffSelected = null;
+        state._ffDragMode = "draw";
+        state._ffDrawing  = { cx: sx4, cy: sy4, r: 0 };
       }
+      state.pointer.mode = null;
       return;
     }
 
@@ -3173,6 +3347,27 @@
         canvas.style.cursor = overSel ? "move" : "crosshair";
       } else if (state.canvasMode === "move") {
         canvas.style.cursor = "grab";
+      } else if (state.canvasMode === "force") {
+        const rect6 = canvas.getBoundingClientRect();
+        const sx6 = ev.clientX - rect6.left, sy6 = ev.clientY - rect6.top;
+        const hit6 = _ffHitTest(sx6, sy6);
+        canvas.style.cursor = hit6 ? (hit6.mode === "resize" ? "ew-resize" : "move") : "crosshair";
+      } else if (state.canvasMode === "zone") {
+        const rect3 = canvas.getBoundingClientRect();
+        const gxy3  = screenToGrid(ev.clientX - rect3.left, ev.clientY - rect3.top);
+        const gx3   = Math.floor(gxy3.x), gy3 = Math.floor(gxy3.y);
+        const selZ3 = state.zones.find(z => z.id === state._zoneSelected);
+        if (selZ3) {
+          const h = _zoneHitHandle(ev.clientX - rect3.left, ev.clientY - rect3.top, selZ3);
+          if (h) {
+            const cmap = { 'resize-nw':'nw-resize','resize-n':'n-resize','resize-ne':'ne-resize',
+              'resize-w':'w-resize','resize-e':'e-resize',
+              'resize-sw':'sw-resize','resize-s':'s-resize','resize-se':'se-resize' };
+            canvas.style.cursor = cmap[h] || "crosshair";
+          } else if (gx3 >= selZ3.x && gx3 < selZ3.x + selZ3.w && gy3 >= selZ3.y && gy3 < selZ3.y + selZ3.h) {
+            canvas.style.cursor = "move";
+          } else { canvas.style.cursor = "crosshair"; }
+        } else { canvas.style.cursor = "crosshair"; }
       }
     }
 
@@ -3199,6 +3394,29 @@
       if (selInfoEl) {
         const { dx: ddx, dy: ddy } = state._selMoveDelta;
         selInfoEl.textContent = `Move (${ddx > 0 ? "+" : ""}${ddx}, ${ddy > 0 ? "+" : ""}${ddy})`;
+      }
+      return;
+    }
+
+    if (state.canvasMode === "force" && state._ffDragMode) {
+      const rect5 = canvas.getBoundingClientRect();
+      const sx5 = ev.clientX - rect5.left, sy5 = ev.clientY - rect5.top;
+      if (state._ffDragMode === "draw" && state._ffDrawing) {
+        state._ffDrawing.r = Math.hypot(sx5 - state._ffDrawing.cx, sy5 - state._ffDrawing.cy);
+      } else {
+        _ffApplyDrag(sx5, sy5);
+      }
+      return;
+    }
+
+    if (state.canvasMode === "zone" && state._zoneDragMode) {
+      const rect2 = canvas.getBoundingClientRect();
+      const gxy2  = screenToGrid(ev.clientX - rect2.left, ev.clientY - rect2.top);
+      const gx2   = Math.floor(gxy2.x), gy2 = Math.floor(gxy2.y);
+      if (state._zoneDragMode === "draw" && state._zoneDrawing) {
+        state._zoneDrawing.x1 = gx2; state._zoneDrawing.y1 = gy2;
+      } else {
+        _zoneApplyDrag(gx2, gy2);
       }
       return;
     }
@@ -3627,7 +3845,18 @@
         }
       }
 
-      if ((ev.key === "Delete" || ev.key === "Backspace") && hasSel) {
+      if ((ev.key === "Delete" || ev.key === "Backspace") && state._zoneSelected != null) {
+        state.zones = state.zones.filter(z => z.id !== state._zoneSelected);
+        state._zoneSelected = null;
+        zonesPanelSync();
+        ev.preventDefault();
+      } else if ((ev.key === "Delete" || ev.key === "Backspace") && state._ffSelected != null) {
+        state.forceFields = state.forceFields.filter(f => f.id !== state._ffSelected);
+        _ffExpanded.delete(state._ffSelected);
+        state._ffSelected = null;
+        fieldsPanelSync();
+        ev.preventDefault();
+      } else if ((ev.key === "Delete" || ev.key === "Backspace") && hasSel) {
         deleteSelCells();
         state.selection = null;
         ev.preventDefault();
@@ -4163,11 +4392,7 @@
       stepsPerSecond: state.stepsPerSecond,
       zoom: state.zoom,
       showGrid: state.showGrid,
-      rulesZoneEnabled: state.rulesZoneEnabled,
-      rulesZoneAxis: state.rulesZoneAxis,
-      rulesZoneOffset: state.rulesZoneOffset,
-      rulesZoneRuleB2: [...state.rulesZoneRuleB2],
-      rulesZoneRuleS2: [...state.rulesZoneRuleS2],
+      zones: state.zones.map(z => ({ ...z, ruleB: [...z.ruleB], ruleS: [...z.ruleS] })),
       forceFields: state.forceFields.map((ff) => ({ ...ff })),
       densityFeedback: state.densityFeedback,
       densityTarget: state.densityTarget,
@@ -4216,12 +4441,14 @@
     if (cfg.stepsPerSecond   !== undefined) state.stepsPerSecond   = cfg.stepsPerSecond;
     if (cfg.zoom             !== undefined) state.zoom             = cfg.zoom;
     if (cfg.showGrid             !== undefined) state.showGrid             = cfg.showGrid;
-    if (cfg.rulesZoneEnabled     !== undefined) state.rulesZoneEnabled     = cfg.rulesZoneEnabled;
-    if (cfg.rulesZoneAxis        !== undefined) state.rulesZoneAxis        = cfg.rulesZoneAxis;
-    if (cfg.rulesZoneOffset      !== undefined) state.rulesZoneOffset      = cfg.rulesZoneOffset;
-    if (cfg.rulesZoneRuleB2) state.rulesZoneRuleB2 = new Set(cfg.rulesZoneRuleB2);
-    if (cfg.rulesZoneRuleS2) state.rulesZoneRuleS2 = new Set(cfg.rulesZoneRuleS2);
-    if (cfg.forceFields          !== undefined) state.forceFields          = cfg.forceFields.map((ff) => ({ ...ff }));
+    if (cfg.zones) {
+      state.zones = cfg.zones.map(z => ({ ...z, ruleB: new Set(z.ruleB), ruleS: new Set(z.ruleS) }));
+      state._zoneIdSeq = state.zones.reduce((m, z) => Math.max(m, z.id), 0);
+    }
+    if (cfg.forceFields !== undefined) {
+      state.forceFields = cfg.forceFields.map((ff) => ({ ...ff }));
+      state._ffIdSeq = state.forceFields.reduce((m, f) => Math.max(m, f.id || 0), 0);
+    }
     if (cfg.densityFeedback      !== undefined) state.densityFeedback      = cfg.densityFeedback;
     if (cfg.densityTarget        !== undefined) state.densityTarget        = cfg.densityTarget;
     if (cfg.densityStrength      !== undefined) state.densityStrength      = cfg.densityStrength;
@@ -4293,14 +4520,11 @@
     sv("adaptRate",        state.adaptRate);
     st("adaptRateOut",     state.adaptRate);
 
-    // Zone lab
-    sc("zoneEnabled",   state.rulesZoneEnabled);
-    sv("zoneAxis",      state.rulesZoneAxis);
-    sv("zoneOffset",    state.rulesZoneOffset);
-    st("zoneOffsetOut", state.rulesZoneOffset);
-    sv("zoneRule2",     ruleToString(state.rulesZoneRuleB2, state.rulesZoneRuleS2));
+    // Zone lab — panel rebuilt dynamically via zonesPanelSync()
+    zonesPanelSync();
 
-    // Field lab
+    // Field lab — list rebuilt dynamically
+    fieldsPanelSync();
     sc("densityFeedback",  state.densityFeedback);
     sv("densityTarget",    state.densityTarget);
     st("densityTargetOut", state.densityTarget);
@@ -4339,25 +4563,348 @@
     updateHud();
   }
 
-  function setupZoneLab() {
-    const enableEl  = document.getElementById("zoneEnabled");
-    const axisEl    = document.getElementById("zoneAxis");
-    const offsetEl  = document.getElementById("zoneOffset");
-    const offsetOut = document.getElementById("zoneOffsetOut");
-    const rule2El   = document.getElementById("zoneRule2");
-    if (!enableEl) return;
+  // ─── Zone helpers ──────────────────────────────────────────────────────────
 
-    enableEl.addEventListener("change", (e) => { state.rulesZoneEnabled = e.target.checked; });
-    axisEl.addEventListener("change", () => { state.rulesZoneAxis = axisEl.value; });
-    offsetEl.addEventListener("input", () => {
-      state.rulesZoneOffset = Number(offsetEl.value);
-      offsetOut.textContent = offsetEl.value;
+  function _zoneHitHandle(sx, sy, z) {
+    const HANDLE = 9;
+    const tl = worldToScreen(z.x, z.y);
+    const br = worldToScreen(z.x + z.w, z.y + z.h);
+    const mx = (tl.x + br.x) / 2, my = (tl.y + br.y) / 2;
+    const hits = [
+      [tl.x, tl.y, 'resize-nw'], [mx, tl.y, 'resize-n'], [br.x, tl.y, 'resize-ne'],
+      [tl.x, my,   'resize-w'],                            [br.x, my,   'resize-e'],
+      [tl.x, br.y, 'resize-sw'], [mx, br.y, 'resize-s'],  [br.x, br.y, 'resize-se'],
+    ];
+    for (const [hx, hy, tag] of hits) {
+      if (Math.abs(sx - hx) <= HANDLE && Math.abs(sy - hy) <= HANDLE) return tag;
+    }
+    return null;
+  }
+
+  function _zoneApplyDrag(gx, gy) {
+    const o  = state._zoneDragOrigin;
+    const z  = state.zones.find(z => z.id === state._zoneSelected);
+    if (!z || !o) return;
+    const dx = gx - o.mx, dy = gy - o.my;
+    const dm = state._zoneDragMode;
+    if (dm === 'move') {
+      z.x = o.zx + dx; z.y = o.zy + dy;
+    } else {
+      let x1 = o.zx, y1 = o.zy, x2 = o.zx + o.zw - 1, y2 = o.zy + o.zh - 1;
+      if (dm.includes('e'))  x2 = Math.max(x1 + 1, o.zx + o.zw - 1 + dx);
+      if (dm.includes('w'))  x1 = Math.min(x2 - 1, o.zx + dx);
+      if (dm.includes('s'))  y2 = Math.max(y1 + 1, o.zy + o.zh - 1 + dy);
+      if (dm.includes('n'))  y1 = Math.min(y2 - 1, o.zy + dy);
+      z.x = x1; z.y = y1; z.w = x2 - x1 + 1; z.h = y2 - y1 + 1;
+    }
+    zonesPanelSync();
+  }
+
+  function zonesPanelSync() {
+    const list = document.getElementById("zoneList");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const z of state.zones) {
+      const isSelected = z.id === state._zoneSelected;
+      const row = document.createElement("div");
+      row.className = "zone-row" + (isSelected ? " zone-row-selected" : "") + (z.visible === false ? " zone-row-hidden" : "");
+      row.dataset.zid = z.id;
+
+      const dot = document.createElement("span");
+      dot.className = "zone-dot"; dot.style.background = z.color;
+
+      const nameEl = document.createElement("input");
+      nameEl.className = "zone-name-input"; nameEl.value = z.name; nameEl.spellcheck = false;
+      nameEl.addEventListener("change", () => { z.name = nameEl.value; });
+
+      const ruleEl = document.createElement("input");
+      ruleEl.className = "zone-rule-input"; ruleEl.value = ruleToString(z.ruleB, z.ruleS);
+      ruleEl.spellcheck = false;
+      ruleEl.addEventListener("change", () => {
+        const r = parseRule(ruleEl.value);
+        if (r) { z.ruleB = r.B; z.ruleS = r.S; ruleEl.style.color = ""; }
+        else ruleEl.style.color = "var(--danger)";
+      });
+
+      // Combine toggle
+      const combBtn = document.createElement("button");
+      combBtn.className = "zone-del-btn zone-comb-btn" + (z.combine ? " zone-comb-on" : "");
+      combBtn.title = z.combine ? "Rules union with overlaps — click for exclusive" : "Exclusive (last wins) — click to combine";
+      combBtn.textContent = "⊕";
+      combBtn.addEventListener("click", () => { z.combine = !z.combine; zonesPanelSync(); });
+
+      const eyeBtn = document.createElement("button");
+      eyeBtn.className = "zone-del-btn zone-eye-btn";
+      eyeBtn.title = z.visible === false ? "Show zone" : "Hide zone";
+      eyeBtn.textContent = z.visible === false ? "🙈" : "👁";
+      eyeBtn.addEventListener("click", () => { z.visible = !z.visible; zonesPanelSync(); });
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "zone-del-btn"; delBtn.textContent = "✕";
+      delBtn.addEventListener("click", () => {
+        state.zones = state.zones.filter(zz => zz.id !== z.id);
+        if (state._zoneSelected === z.id) state._zoneSelected = null;
+        zonesPanelSync();
+      });
+
+      row.appendChild(dot); row.appendChild(nameEl); row.appendChild(ruleEl); row.appendChild(combBtn); row.appendChild(eyeBtn); row.appendChild(delBtn);
+      row.addEventListener("click", (e) => {
+        if (e.target === delBtn || e.target === eyeBtn || e.target === combBtn || e.target === nameEl || e.target === ruleEl) return;
+        state._zoneSelected = z.id;
+        setCanvasMode("zone");
+        zonesPanelSync();
+      });
+      list.appendChild(row);
+    }
+    if (state.zones.length === 0) {
+      list.innerHTML = '<div style="color:#556;font-size:11px;padding:4px 0">No zones yet — draw on canvas</div>';
+    }
+  }
+
+  function setupZoneLab() {
+    const drawBtn = document.getElementById("zoneDrawBtn");
+    const clearBtn = document.getElementById("zoneClearBtn");
+    const delSelBtn = document.getElementById("zoneDelSelBtn");
+    if (!drawBtn) return;
+
+    drawBtn.addEventListener("click", () => {
+      const next = state.canvasMode === "zone" ? "paint" : "zone";
+      setCanvasMode(next);
+      drawBtn.classList.toggle("rl-type-active", next === "zone");
+      drawBtn.textContent = next === "zone" ? "Drawing… (Esc to stop)" : "Draw Zone";
     });
-    rule2El.addEventListener("change", () => {
-      const r = parseRule(rule2El.value);
-      if (r) { state.rulesZoneRuleB2 = r.B; state.rulesZoneRuleS2 = r.S; }
-      else { rule2El.style.borderColor = "var(--danger)"; setTimeout(() => { rule2El.style.borderColor = ""; }, 600); }
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && state.canvasMode === "zone") {
+        setCanvasMode("paint");
+        if (drawBtn) { drawBtn.classList.remove("rl-type-active"); drawBtn.textContent = "Draw Zone"; }
+        state._zoneDrawing = null; state._zoneDragMode = null;
+      }
     });
+    clearBtn?.addEventListener("click", () => {
+      state.zones = []; state._zoneSelected = null;
+      state._zoneDrawing = null; state._zoneDragMode = null;
+      if (state.canvasMode === "zone") setCanvasMode("paint");
+      zonesPanelSync();
+    });
+    delSelBtn?.addEventListener("click", () => {
+      if (state._zoneSelected == null) return;
+      state.zones = state.zones.filter(z => z.id !== state._zoneSelected);
+      state._zoneSelected = null;
+      zonesPanelSync();
+    });
+
+    zonesPanelSync();
+  }
+
+  // ─── Force-field helpers ──────────────────────────────────────────────────
+
+  function _ffHitTest(sx, sy) {
+    const EDGE = 10;
+    for (let i = state.forceFields.length - 1; i >= 0; i--) {
+      const ff = state.forceFields[i];
+      if (ff.visible === false) continue;
+      const { cx, cy } = _ffScreenCenter(ff);
+      const r = ff.radius * state.zoom;
+      const d = Math.hypot(sx - cx, sy - cy);
+      if (d <= r + EDGE) return { field: ff, mode: d >= r - EDGE ? "resize" : "move" };
+    }
+    return null;
+  }
+
+  function _ffApplyDrag(sx, sy) {
+    const o  = state._ffDragOrigin;
+    const ff = state.forceFields.find(f => f.id === state._ffSelected);
+    if (!ff || !o) return;
+    if (state._ffDragMode === "move") {
+      const wPrev = screenToWorld(o.sx, o.sy);
+      const wNow  = screenToWorld(sx, sy);
+      ff.x = o.fx + (wNow.x - wPrev.x);
+      ff.y = o.fy + (wNow.y - wPrev.y);
+    } else if (state._ffDragMode === "resize") {
+      const newR = Math.hypot(sx - o.cx, sy - o.cy) / state.zoom;
+      ff.radius = Math.max(2, Math.round(newR));
+    }
+    fieldsPanelSync();
+  }
+
+  function fieldsPanelSync() {
+    const list = document.getElementById("ffList");
+    if (!list) return;
+    list.innerHTML = "";
+
+    for (const ff of state.forceFields) {
+      const isSel    = ff.id === state._ffSelected;
+      const isOpen   = _ffExpanded.has(ff.id);
+      const isHidden = ff.visible === false;
+      const isAttract= ff.type === "attract";
+      const accent   = isAttract ? "#5be0bc" : "#ff6b6b";
+      const isCombine= ff.combine !== false;
+
+      // ── Card ───────────────────────────────────────────────────────────────
+      const card = document.createElement("div");
+      card.className = "ff-card" + (isSel ? " ff-card-selected" : "") + (isHidden ? " ff-card-hidden" : "");
+      card.style.setProperty("--ff-accent", accent);
+
+      // ── Header ─────────────────────────────────────────────────────────────
+      const hdr = document.createElement("div"); hdr.className = "ff-header";
+
+      const dot = document.createElement("span");
+      dot.className = "zone-dot ff-dot"; dot.style.background = accent;
+
+      const nameEl = document.createElement("input");
+      nameEl.className = "zone-name-input ff-name";
+      nameEl.value = ff.name || (isAttract ? "Attract" : "Repel");
+      nameEl.spellcheck = false;
+      nameEl.addEventListener("change", () => { ff.name = nameEl.value; });
+
+      const chip = document.createElement("span");
+      chip.className = "ff-chip ff-chip-" + ff.type;
+      chip.textContent = isAttract ? "A" : "R";
+
+      const stats = document.createElement("span");
+      stats.className = "ff-stats";
+      stats.textContent = `r${ff.radius} s${ff.strength}`;
+
+      // Combine toggle in header (⊕ = combines, dimmed ⊕ = exclusive)
+      const combBtn = document.createElement("button");
+      combBtn.className = "zone-del-btn zone-comb-btn" + (isCombine ? " zone-comb-on" : "");
+      combBtn.title = isCombine ? "Combining with overlapping fields — click for exclusive" : "Exclusive (blocks others) — click to combine";
+      combBtn.textContent = "⊕";
+      combBtn.addEventListener("click", (e) => { e.stopPropagation(); ff.combine = !isCombine; fieldsPanelSync(); });
+
+      const eyeBtn = document.createElement("button");
+      eyeBtn.className = "zone-del-btn";
+      eyeBtn.title = isHidden ? "Show" : "Hide";
+      eyeBtn.textContent = isHidden ? "🙈" : "👁";
+      eyeBtn.addEventListener("click", (e) => { e.stopPropagation(); ff.visible = !ff.visible; fieldsPanelSync(); });
+
+      const chevron = document.createElement("button");
+      chevron.className = "ff-chevron" + (isOpen ? " ff-chevron-open" : "");
+      chevron.textContent = "›"; chevron.title = isOpen ? "Collapse" : "Expand";
+      chevron.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (_ffExpanded.has(ff.id)) _ffExpanded.delete(ff.id); else _ffExpanded.add(ff.id);
+        fieldsPanelSync();
+      });
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "zone-del-btn"; delBtn.title = "Delete"; delBtn.textContent = "✕";
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.forceFields = state.forceFields.filter(f => f.id !== ff.id);
+        _ffExpanded.delete(ff.id);
+        if (state._ffSelected === ff.id) state._ffSelected = null;
+        fieldsPanelSync();
+      });
+
+      hdr.appendChild(dot); hdr.appendChild(nameEl); hdr.appendChild(chip);
+      hdr.appendChild(stats); hdr.appendChild(combBtn); hdr.appendChild(eyeBtn);
+      hdr.appendChild(chevron); hdr.appendChild(delBtn);
+      hdr.addEventListener("click", (e) => {
+        if ([nameEl, combBtn, eyeBtn, delBtn].includes(e.target)) return;
+        if (_ffExpanded.has(ff.id)) _ffExpanded.delete(ff.id); else _ffExpanded.add(ff.id);
+        state._ffSelected = ff.id; setCanvasMode("force"); fieldsPanelSync();
+      });
+      card.appendChild(hdr);
+
+      // ── Expanded detail ────────────────────────────────────────────────────
+      if (isOpen) {
+        const detail = document.createElement("div"); detail.className = "ff-detail";
+
+        const mkDRow = (label, content) => {
+          const r = document.createElement("div"); r.className = "ff-detail-row";
+          const lbl = document.createElement("span"); lbl.className = "ff-detail-label"; lbl.textContent = label;
+          r.appendChild(lbl); r.appendChild(content); return r;
+        };
+        const mkSlider = (min, max, step, val, onChange) => {
+          const wrap = document.createElement("div"); wrap.className = "ff-slider-wrap";
+          const sl = document.createElement("input"); sl.type = "range"; sl.className = "ff-slider";
+          sl.min = min; sl.max = max; sl.step = step; sl.value = val;
+          const out = document.createElement("span"); out.className = "ff-slider-out"; out.textContent = val;
+          sl.addEventListener("input", () => {
+            out.textContent = sl.value; onChange(Number(sl.value));
+            stats.textContent = `r${ff.radius} s${ff.strength}`;
+          });
+          wrap.appendChild(sl); wrap.appendChild(out); return wrap;
+        };
+
+        // Type
+        const typeSel = document.createElement("select"); typeSel.className = "ff-select";
+        [["attract","Attract"],["repel","Repel"]].forEach(([v, t]) => {
+          const o = document.createElement("option"); o.value = v; o.textContent = t;
+          if (ff.type === v) o.selected = true; typeSel.appendChild(o);
+        });
+        typeSel.addEventListener("change", () => {
+          ff.type = typeSel.value;
+          const a2 = ff.type === "attract";
+          const ac = a2 ? "#5be0bc" : "#ff6b6b";
+          dot.style.background = ac; chip.textContent = a2 ? "A" : "R";
+          chip.className = "ff-chip ff-chip-" + ff.type;
+          card.style.setProperty("--ff-accent", ac);
+        });
+
+        // Falloff
+        const fallSel = document.createElement("select"); fallSel.className = "ff-select";
+        [["linear","Linear"],["bell","Bell (Gaussian)"],["step","Step (Flat)"]].forEach(([v, t]) => {
+          const o = document.createElement("option"); o.value = v; o.textContent = t;
+          if ((ff.falloff || "linear") === v) o.selected = true; fallSel.appendChild(o);
+        });
+        fallSel.addEventListener("change", () => { ff.falloff = fallSel.value; });
+
+        // Density — live read-only metric, tagged for rAF updates
+        const densWrap  = document.createElement("div"); densWrap.className = "ff-density-wrap";
+        const densBar   = document.createElement("div"); densBar.className = "ff-density-bar";
+        const denseFill = document.createElement("div");
+        denseFill.className = "ff-density-fill"; denseFill.dataset.ffid = ff.id;
+        denseFill.style.background = accent;
+        const densLabel = document.createElement("span");
+        densLabel.className = "ff-density-label"; densLabel.dataset.ffid = ff.id;
+        densBar.appendChild(denseFill); densWrap.appendChild(densBar); densWrap.appendChild(densLabel);
+        // seed initial value
+        const d0 = _fieldDensity(ff);
+        denseFill.style.width = (d0 * 100).toFixed(1) + "%";
+        densLabel.textContent  = (d0 * 100).toFixed(1) + "%";
+
+        // Density metric row — styled as read-only, not a control
+        const densMetaRow = document.createElement("div"); densMetaRow.className = "ff-density-row";
+        const densMetaLbl = document.createElement("span"); densMetaLbl.className = "ff-detail-label";
+        densMetaLbl.textContent = "Density";
+        const densNote = document.createElement("span"); densNote.className = "ff-density-note";
+        densNote.textContent = "live";
+        densMetaRow.appendChild(densMetaLbl); densMetaRow.appendChild(densWrap); densMetaRow.appendChild(densNote);
+
+        detail.appendChild(mkDRow("Type",     typeSel));
+        detail.appendChild(mkDRow("Radius",   mkSlider(3, 80, 1, ff.radius,   v => { ff.radius   = v; })));
+        detail.appendChild(mkDRow("Strength", mkSlider(1, 10, 1, ff.strength, v => { ff.strength = v; })));
+        detail.appendChild(mkDRow("Falloff",  fallSel));
+        detail.appendChild(densMetaRow);
+
+        card.appendChild(detail);
+      }
+
+      list.appendChild(card);
+    }
+
+    if (state.forceFields.length === 0) {
+      list.innerHTML = '<div style="color:#556;font-size:11px;padding:4px 0">No fields yet — draw on canvas</div>';
+    }
+  }
+
+  let _ffDensityTick = 0;
+  function _updateFieldDensityBars() {
+    if (++_ffDensityTick % 30 !== 0) return;  // update every 30 ticks (~1s at 30fps)
+    const list = document.getElementById("ffList");
+    if (!list) return;
+    for (const ff of state.forceFields) {
+      if (!_ffExpanded.has(ff.id)) continue;
+      const fill = list.querySelector(`.ff-density-fill[data-ffid="${ff.id}"]`);
+      const lbl  = list.querySelector(`.ff-density-label[data-ffid="${ff.id}"]`);
+      if (!fill && !lbl) continue;
+      const d = _fieldDensity(ff);
+      const pct = (d * 100).toFixed(1) + "%";
+      if (fill) fill.style.width = pct;
+      if (lbl)  lbl.textContent  = pct;
+    }
   }
 
   function setupFieldLab() {
@@ -4377,7 +4924,17 @@
     if (!toggleBtn) return;
 
     toggleBtn.addEventListener("click", () => {
-      setCanvasMode(state.canvasMode === "force" ? "paint" : "force");
+      const next = state.canvasMode === "force" ? "paint" : "force";
+      setCanvasMode(next);
+      toggleBtn.classList.toggle("rl-type-active", next === "force");
+      toggleBtn.textContent = next === "force" ? "Drawing… (Esc)" : "Draw Field  ⊛";
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && state.canvasMode === "force") {
+        setCanvasMode("paint");
+        if (toggleBtn) { toggleBtn.classList.remove("rl-type-active"); toggleBtn.textContent = "Draw Field  ⊛"; }
+        state._ffDrawing = null; state._ffDragMode = null;
+      }
     });
     attractBtn.addEventListener("click", () => {
       state.forcePaintType = "attract";
@@ -4397,7 +4954,13 @@
       state.forcePaintStrength = Number(strengthEl.value);
       strengthOut.textContent = strengthEl.value;
     });
-    clearBtn.addEventListener("click", () => { state.forceFields = []; });
+    const falloffEl = document.getElementById("forceFalloff");
+    falloffEl?.addEventListener("change", () => { state.forcePaintFalloff = falloffEl.value; });
+
+    clearBtn?.addEventListener("click", () => {
+      state.forceFields = []; state._ffSelected = null; _ffExpanded.clear();
+      fieldsPanelSync();
+    });
     densityEl.addEventListener("change", (e) => { state.densityFeedback = e.target.checked; });
     dTargetEl.addEventListener("input", () => {
       state.densityTarget = Number(dTargetEl.value);
@@ -4407,6 +4970,8 @@
       state.densityStrength = Number(dStrengthEl.value);
       dStrengthOut.textContent = dStrengthEl.value;
     });
+
+    fieldsPanelSync();
   }
 
   function setupLibrary() {
@@ -5178,6 +5743,11 @@
     setupAnalysisLab();
     setupNotebook();
     buildPalette();
+    const paletteSearchEl = document.getElementById("paletteSearch");
+    if (paletteSearchEl) {
+      paletteSearchEl.addEventListener("input", () => buildPalette(paletteSearchEl.value));
+    }
+    initPaneResizers();
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
