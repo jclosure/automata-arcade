@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Automata Arcade</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="lib/codemirror/codemirror.min.css" />
+    <link rel="stylesheet" href="lib/codemirror/theme-dark.min.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -35,23 +37,11 @@
             <select id="modeSelect">
               <option value="sandbox">Sandbox</option>
               <option value="arcade">Arcade</option>
-            <optgroup label="── Manifolds ──">
               <option value="sphere">Sphere</option>
               <option value="torus">Torus</option>
               <option value="klein">Klein Bottle</option>
               <option value="mobius">Möbius Strip</option>
               <option value="cylinder">Cylinder</option>
-            </optgroup>
-              <optgroup label="── Fractal ──">
-                <option value="fractal">Fractal Explorer</option>
-              </optgroup>
-              <optgroup label="── Shader Engine ──">
-                <option value="lenia">Lenia</option>
-                <option value="smoothlife">SmoothLife</option>
-                <option value="gray-scott">Gray-Scott</option>
-                <option value="lenia-mc2">Lenia 2-species</option>
-                <option value="fractal-lenia">Fractal Lenia</option>
-              </optgroup>
             </select>
           </label>
           <label class="level-wrap">Level
@@ -66,6 +56,7 @@
             <button class="mode-btn" data-mode="move" title="Move/Pan (M)">✥ Move</button>
             <button class="mode-btn" data-mode="select" title="Select (S)">⬚ Select</button>
             <button class="mode-btn" data-mode="force" title="Force Paint (V)">⊛ Force</button>
+            <button class="mode-btn" data-mode="lens" title="Lens (L)">🔍 Lens</button>
           </div>
         </div>
         <div class="right-controls">
@@ -82,633 +73,452 @@
         </div>
       </section>
 
-      <main class="workspace">
-        <aside class="panel palette" id="palettePanel">
-          <h2>Prefab Palette</h2>
-          <input id="paletteSearch" class="palette-search" type="search" placeholder="Filter patterns…" autocomplete="off" />
-          <div id="paletteList" class="palette-list"></div>
-        </aside>
-        <div class="resize-handle" id="paletteResizer"></div>
+      <!-- workspace-area: canvas + right sidebar + script kernel below -->
+      <div class="workspace-area">
+        <main class="workspace" id="workspaceGrid">
 
-        <section class="board-wrap">
-          <canvas id="lifeCanvas"></canvas>
-          <canvas id="sphereCanvas"></canvas>
-          <div id="overlayMessage" class="overlay hidden"></div>
-          <div id="timelineBar" class="tl-bar">
-            <div class="tl-btns">
-              <button id="tlStart" title="Jump to start">⏮</button>
-              <button id="tlStepBack" title="Step backward">⏴</button>
-              <button id="tlRevPlay" title="Play backward">⏪</button>
-              <button id="tlPlayPause" title="Play / Pause">▶</button>
-              <button id="tlStepFwd" title="Step forward">⏵</button>
-              <button id="tlGoLive" title="Jump to live">⏭</button>
-            </div>
-            <div class="tl-scrub">
-              <span id="tlGenCur" class="tl-gen">0</span>
-              <div class="tl-track" id="tlTrack">
-                <div class="tl-progress" id="tlProgress"></div>
-                <div class="tl-thumb" id="tlThumb"></div>
+          <section class="board-wrap">
+            <canvas id="lifeCanvas"></canvas>
+            <canvas id="sphereCanvas"></canvas>
+            <div id="overlayMessage" class="overlay hidden"></div>
+            <div id="timelineBar" class="tl-bar">
+              <div class="tl-btns">
+                <button id="tlStart" title="Jump to start">⏮</button>
+                <button id="tlStepBack" title="Step backward">⏴</button>
+                <button id="tlRevPlay" title="Play backward">⏪</button>
+                <button id="tlPlayPause" title="Play / Pause">▶</button>
+                <button id="tlStepFwd" title="Step forward">⏵</button>
+                <button id="tlGoLive" title="Jump to live">⏭</button>
               </div>
-              <span id="tlGenMax" class="tl-gen tl-gen-r">0</span>
+              <div class="tl-scrub">
+                <span id="tlGenCur" class="tl-gen">0</span>
+                <div class="tl-track" id="tlTrack">
+                  <div class="tl-progress" id="tlProgress"></div>
+                  <div class="tl-thumb" id="tlThumb"></div>
+                </div>
+                <span id="tlGenMax" class="tl-gen tl-gen-r">0</span>
+              </div>
+              <div class="tl-speed-wrap">
+                <input id="tlSpeed" class="tl-speed" type="range" min="0" max="6" step="1" value="3" />
+                <span id="tlSpeedLabel" class="tl-speed-lbl">8×</span>
+              </div>
             </div>
-            <div class="tl-speed-wrap">
-              <input id="tlSpeed" class="tl-speed" type="range" min="0" max="6" step="1" value="3" />
-              <span id="tlSpeedLabel" class="tl-speed-lbl">8×</span>
+            <div id="guideCard" class="guide-card hidden">
+              <div class="guide-header">
+                <span id="guideConcept" class="guide-concept"></span>
+                <button id="guideClose" class="guide-close" title="Close guide">×</button>
+              </div>
+              <p id="guideBody" class="guide-body"></p>
+              <div id="guideHints" class="guide-hints"></div>
+              <button id="guideHintBtn" class="guide-hint-btn">Hint</button>
+            </div>
+          </section>
+
+          <!-- Drag handle between canvas and sidebar -->
+          <div class="resize-handle" id="sidebarResizer"></div>
+
+          <!-- Right sidebar: tabs + activity bar -->
+          <aside class="right-sidebar" id="rightSidebar">
+            <div class="sidebar-content" id="sidebarContent">
+
+              <!-- ── Prefabs tab ──────────────────────────────── -->
+              <div class="stab-panel" id="stabPrefabs" style="display:none">
+                <div class="stab-header">🎭 Prefabs</div>
+                <div class="prefab-inspector-body" id="inspectorBody">
+                  <p class="stab-empty">Select a prefab to inspect.</p>
+                </div>
+                <details id="captureSection" class="capture-details">
+                  <summary class="capture-summary">Capture Prefab</summary>
+                  <div id="captureLab" class="capture-body">
+                    <button id="selModeBtn" class="rl-type-btn" style="width:100%;margin-bottom:4px">Select Region <kbd>S</kbd></button>
+                    <div id="selInfo" class="capture-info"></div>
+                    <label class="rl-row">
+                      <span>Name</span>
+                      <input id="captureNameInput" class="rl-input" type="text" placeholder="Pattern name…" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <label class="rl-row">
+                      <span>Desc</span>
+                      <input id="captureDescInput" class="rl-input" type="text" placeholder="Optional description…" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <div style="display:flex;gap:5px;margin-top:3px">
+                      <button id="captureSaveBtn" class="rl-apply" style="flex:1">Save Prefab</button>
+                      <button id="clearSelBtn" class="rl-apply" style="flex:0 0 auto">Clear</button>
+                    </div>
+                  </div>
+                </details>
+                <div class="palette-search-wrap">
+                  <input id="paletteSearch" class="palette-search" type="text" placeholder="Search prefabs…" autocomplete="off" spellcheck="false" />
+                </div>
+                <div id="paletteList" class="palette-list"></div>
+              </div>
+
+              <!-- ── Inspector tab (default) ─────────────────── -->
+              <div class="stab-panel" id="stabInspector">
+                <div class="stab-header">🔬 Inspector</div>
+
+                <h3 class="lab-heading">Rule Lab</h3>
+                <div id="ruleLab">
+                  <label class="rl-row">
+                    <span>Rule</span>
+                    <input id="ruleInput" class="rl-input" type="text" value="B3/S23" spellcheck="false" autocomplete="off" />
+                    <button id="ruleApply" class="rl-apply">Apply</button>
+                  </label>
+                  <div class="rl-presets">
+                    <button class="rl-preset" data-rule="B3/S23" title="The classic">Conway</button>
+                    <button class="rl-preset" data-rule="B36/S23" title="Has a self-replicator">HighLife</button>
+                    <button class="rl-preset" data-rule="B2/S" title="Explosive — nothing survives">Seeds</button>
+                    <button class="rl-preset" data-rule="B3678/S34678" title="Self-complementary">Day&amp;Night</button>
+                    <button class="rl-preset" data-rule="B368/S245" title="Unusual glider shapes">Morley</button>
+                    <button class="rl-preset" data-rule="B4678/S35678" title="Crystalline regions">Anneal</button>
+                    <button class="rl-preset" data-rule="B3/S12345" title="Grows maze corridors">Maze</button>
+                    <button class="rl-preset" data-rule="B35678/S5678" title="Amoeba-like blobs">Diamoeba</button>
+                  </div>
+                  <label class="rl-row">
+                    <span>Kernel</span>
+                    <select id="kernelShape" class="rl-select">
+                      <option value="moore">Moore</option>
+                      <option value="vonNeumann">Von Neumann</option>
+                      <option value="ring">Ring</option>
+                      <option value="cross">Cross</option>
+                      <option value="hex">Hex</option>
+                      <option value="knight">Knight</option>
+                    </select>
+                  </label>
+                  <label class="rl-row">
+                    <span>Radius</span>
+                    <input id="kernelRadius" class="rl-radius" type="range" min="1" max="5" value="1" />
+                    <span id="kernelRadiusOut">1</span>
+                  </label>
+                  <div class="rl-sep"></div>
+                  <label class="rl-check">
+                    <input type="checkbox" id="ruleCycleActive" /> Cycle rules
+                  </label>
+                  <label class="rl-row">
+                    <span>Rule 2</span>
+                    <input id="ruleInput2" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="rl-row">
+                    <span>Period</span>
+                    <input id="ruleCyclePeriod" class="rl-radius" type="range" min="10" max="500" step="10" value="60" />
+                    <span id="ruleCyclePeriodOut">60</span>
+                  </label>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Physics</h3>
+                <div id="physicsLab">
+                  <label class="rl-row">
+                    <span>Drift X</span>
+                    <input id="driftX" class="rl-radius" type="range" min="-3" max="3" step="0.25" value="0" />
+                    <span id="driftXOut">0.00</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Drift Y</span>
+                    <input id="driftY" class="rl-radius" type="range" min="-3" max="3" step="0.25" value="0" />
+                    <span id="driftYOut">0.00</span>
+                  </label>
+                  <label class="rl-check">
+                    <input type="checkbox" id="colorByAge" /> Color by age
+                  </label>
+                  <label class="rl-check">
+                    <input type="checkbox" id="showTrails" /> Show trails
+                  </label>
+                  <label class="rl-row">
+                    <span>Decay</span>
+                    <input id="trailDecay" class="rl-radius" type="range" min="0.7" max="0.99" step="0.01" value="0.88" />
+                    <span id="trailDecayOut">0.88</span>
+                  </label>
+                  <div class="rl-sep"></div>
+                  <label class="rl-check">
+                    <input type="checkbox" id="repulseEnabled" /> Repulse old cells
+                  </label>
+                  <label class="rl-row">
+                    <span>Age ≥</span>
+                    <input id="repulseAge" class="rl-radius" type="range" min="1" max="100" step="1" value="20" />
+                    <span id="repulseAgeOut">20</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Strength</span>
+                    <input id="repulseStrength" class="rl-radius" type="range" min="1" max="4" step="1" value="1" />
+                    <span id="repulseStrengthOut">1</span>
+                  </label>
+                  <div class="rl-sep"></div>
+                  <label class="rl-check">
+                    <input type="checkbox" id="contigRepulseEnabled" /> Organism repulsion
+                  </label>
+                  <label class="rl-row">
+                    <span>Radius</span>
+                    <input id="contigRepulseRadius" class="rl-radius" type="range" min="5" max="100" step="5" value="30" />
+                    <span id="contigRepulseRadiusOut">30</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Force</span>
+                    <input id="contigRepulseForce" class="rl-radius" type="range" min="0.1" max="8" step="0.1" value="1" />
+                    <span id="contigRepulseForceOut">1.0</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Min size</span>
+                    <input id="contigMinSize" class="rl-radius" type="range" min="2" max="50" step="1" value="5" />
+                    <span id="contigMinSizeOut">5</span>
+                  </label>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Wave Mode</h3>
+                <div id="waveLab">
+                  <label class="rl-check">
+                    <input type="checkbox" id="leniaModeChk" /> Lenia wave mode
+                  </label>
+                  <label class="rl-row">
+                    <span>μ center</span>
+                    <input id="leniaMu" class="rl-radius" type="range" min="0.01" max="0.5" step="0.01" value="0.15" />
+                    <span id="leniaMuOut">0.15</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>σ width</span>
+                    <input id="leniaSigma" class="rl-radius" type="range" min="0.001" max="0.1" step="0.001" value="0.017" />
+                    <span id="leniaSigmaOut">0.017</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Δt step</span>
+                    <input id="leniaDt" class="rl-radius" type="range" min="0.01" max="0.5" step="0.01" value="0.1" />
+                    <span id="leniaDtOut">0.10</span>
+                  </label>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Cell Types</h3>
+                <div id="typeLab">
+                  <label class="rl-check">
+                    <input type="checkbox" id="cellTypesChk" /> Enable cell types
+                  </label>
+                  <div class="rl-type-row">
+                    <button id="typeABtn" class="rl-type-btn rl-type-active">Type A</button>
+                    <button id="typeBBtn" class="rl-type-btn">Type B</button>
+                    <span class="rl-type-hint"><kbd>X</kbd> toggle</span>
+                  </div>
+                  <label class="rl-row">
+                    <span>A rule</span>
+                    <input id="typeARule" class="rl-input" type="text" value="B3/S23" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="rl-row">
+                    <span>B rule</span>
+                    <input id="typeBRule" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
+                  </label>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Rule Zones</h3>
+                <div id="zoneLab">
+                  <div style="display:flex;gap:6px;margin-bottom:6px">
+                    <button id="zoneDrawBtn" class="rl-type-btn" style="flex:1">Draw Zone</button>
+                    <button id="zoneDelSelBtn" class="rl-type-btn" title="Delete selected zone">✕ Del</button>
+                    <button id="zoneClearBtn" class="rl-type-btn" title="Remove all zones">Clear</button>
+                  </div>
+                  <div style="font-size:10px;color:#678;margin-bottom:6px;line-height:1.5">
+                    Draw a rectangle on the canvas.<br>
+                    Click a zone to select · drag to move · drag handles to resize.
+                  </div>
+                  <div id="zoneList"></div>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Force Fields</h3>
+                <div id="fieldLab">
+                  <div style="display:flex;gap:6px;margin-bottom:6px">
+                    <button id="forcePaintToggle" class="rl-type-btn" style="flex:1">Draw Field  ⊛</button>
+                    <button id="forceClearBtn" class="rl-type-btn" title="Remove all fields">Clear</button>
+                  </div>
+                  <div style="font-size:10px;color:#678;margin-bottom:6px;line-height:1.5">
+                    Click+drag on canvas to draw a field.<br>
+                    Click a field to select · drag to move · drag edge to resize.
+                  </div>
+                  <div id="ffList"></div>
+                  <div class="rl-sep"></div>
+                  <div style="font-size:10px;color:#678;margin-bottom:4px">New field defaults</div>
+                  <div class="rl-type-row">
+                    <button id="forceAttractBtn" class="rl-type-btn rl-type-active">Attract</button>
+                    <button id="forceRepelBtn" class="rl-type-btn">Repel</button>
+                  </div>
+                  <label class="rl-row">
+                    <span>Radius</span>
+                    <input id="forceRadius" class="rl-radius" type="range" min="3" max="60" step="1" value="15" />
+                    <span id="forceRadiusOut">15</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Strength</span>
+                    <input id="forceStrength" class="rl-radius" type="range" min="1" max="10" step="1" value="3" />
+                    <span id="forceStrengthOut">3</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Falloff</span>
+                    <select id="forceFalloff" class="rl-select">
+                      <option value="linear">Linear</option>
+                      <option value="bell">Bell</option>
+                      <option value="step">Step</option>
+                    </select>
+                  </label>
+                  <div class="rl-sep"></div>
+                  <label class="rl-check">
+                    <input type="checkbox" id="densityFeedback" /> Density feedback
+                  </label>
+                  <label class="rl-row">
+                    <span>Target</span>
+                    <input id="densityTarget" class="rl-radius" type="range" min="50" max="3000" step="50" value="500" />
+                    <span id="densityTargetOut">500</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Strength</span>
+                    <input id="densityStrength" class="rl-radius" type="range" min="1" max="5" step="1" value="1" />
+                    <span id="densityStrengthOut">1</span>
+                  </label>
+                </div>
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Lenses</h3>
+                <div id="lensLab">
+                  <div class="lens-controls">
+                    <button id="lensDrawToggle" class="rl-type-btn" style="width:100%;margin-bottom:4px">Draw Lens <kbd>L</kbd></button>
+                    <label class="rl-row">
+                      <span>Zoom</span>
+                      <input id="lensZoomDefault" class="rl-radius" type="range" min="2" max="16" step="1" value="4" />
+                      <span id="lensZoomDefaultOut">4×</span>
+                    </label>
+                  </div>
+                  <div id="lensList" class="lens-list"></div>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Analysis</h3>
+                <div id="analysisLab">
+                  <button id="detectPeriodBtn" class="rl-apply" style="width:100%">Detect Period</button>
+                  <div id="periodResult" class="capture-info"></div>
+                  <div class="rl-sep"></div>
+                  <div style="display:flex;gap:5px">
+                    <button id="exportRLEBtn" class="rl-apply" style="flex:1">Export RLE</button>
+                    <button id="importRLEBtn" class="rl-apply" style="flex:1">Import RLE</button>
+                  </div>
+                  <textarea id="rleAreaInline" class="rle-area-inline" style="display:none" placeholder="Paste RLE here…" spellcheck="false"></textarea>
+                  <button id="rleLoadInlineBtn" class="rl-apply" style="width:100%;display:none">Load from RLE</button>
+                </div>
+
+                <div class="lab-sep"></div>
+                <h3 class="lab-heading">Heatmap &amp; Evo</h3>
+                <div id="evoLab">
+                  <label class="rl-check">
+                    <input type="checkbox" id="heatmapMode" /> Show heatmap only
+                  </label>
+                  <label class="rl-check">
+                    <input type="checkbox" id="heatmapOverlay" /> Overlay heatmap
+                  </label>
+                  <button id="clearHeatBtn" class="rl-apply" style="width:100%;margin-top:3px">Clear heat</button>
+                  <div class="rl-sep"></div>
+                  <label class="rl-check">
+                    <input type="checkbox" id="entrenchEnabled" /> Entrenched trails
+                  </label>
+                  <label class="rl-row">
+                    <span>Thresh</span>
+                    <input id="entrenchThresh" class="rl-radius" type="range" min="2" max="40" step="1" value="8" />
+                    <span id="entrenchThreshOut">8</span>
+                  </label>
+                  <div class="rl-sep"></div>
+                  <label class="rl-check">
+                    <input type="checkbox" id="adaptRulesEnabled" /> Adaptive rules
+                  </label>
+                  <label class="rl-row">
+                    <span>Target</span>
+                    <input id="adaptTarget" class="rl-radius" type="range" min="50" max="2000" step="50" value="400" />
+                    <span id="adaptTargetOut">400</span>
+                  </label>
+                  <label class="rl-row">
+                    <span>Rate</span>
+                    <input id="adaptRate" class="rl-radius" type="range" min="20" max="500" step="10" value="80" />
+                    <span id="adaptRateOut">80</span>
+                  </label>
+                </div>
+              </div><!-- /stabInspector -->
+
+              <!-- ── Settings tab ────────────────────────────── -->
+              <div class="stab-panel" id="stabSettings" style="display:none">
+                <div class="stab-header">⚙ Settings</div>
+                <div class="settings-panel">
+                  <h3 class="lab-heading">Keyboard Shortcuts</h3>
+                  <ul class="fixed-keys">
+                    <li><kbd>Space</kbd> Play / Pause</li>
+                    <li><kbd>N</kbd> Step forward</li>
+                    <li><kbd>B</kbd> Step backward</li>
+                    <li><kbd>C</kbd> Clear board</li>
+                    <li><kbd>D</kbd> Load demo</li>
+                    <li><kbd>R</kbd> Rotate 90°</li>
+                    <li><kbd>F</kbd> Flip X</li>
+                    <li><kbd>G</kbd> Toggle grid</li>
+                    <li><kbd>P</kbd> Paint mode</li>
+                    <li><kbd>M</kbd> Move/pan mode</li>
+                    <li><kbd>S</kbd> Select mode</li>
+                    <li><kbd>V</kbd> Force-paint mode</li>
+                    <li><kbd>L</kbd> Lens mode</li>
+                    <li><kbd>Esc</kbd> Back to paint mode</li>
+                    <li><kbd>X</kbd> Toggle paint type A/B</li>
+                    <li><kbd>Del</kbd> Delete selection</li>
+                    <li><kbd>Ctrl+C</kbd> Copy selection</li>
+                    <li><kbd>Ctrl+X</kbd> Cut selection</li>
+                    <li><kbd>Ctrl+V</kbd> Paste at cursor</li>
+                    <li><kbd>Mouse Wheel</kbd> Zoom</li>
+                    <li><kbd>Middle Drag</kbd> Pan</li>
+                    <li><kbd>Scroll over lens</kbd> Zoom lens</li>
+                    <li><kbd>1–7</kbd> Mode presets</li>
+                  </ul>
+                </div>
+              </div>
+
+            </div><!-- /sidebar-content -->
+
+            <!-- Always-visible activity bar (VSCode-style) -->
+            <div class="activity-bar">
+              <button class="abar-btn" data-stab="prefabs" title="Prefabs">🎭</button>
+              <button class="abar-btn abar-active" data-stab="inspector" title="Inspector">🔬</button>
+              <button class="abar-btn" data-stab="settings" title="Settings">⚙</button>
+            </div>
+          </aside>
+
+        </main><!-- /workspace -->
+
+        <!-- Script Kernel — bottom panel, starts collapsed -->
+        <div class="bottom-panel bp-collapsed" id="scriptPanel">
+          <div class="bp-resize-handle" id="bottomResizer"></div>
+          <div class="bp-header" id="scriptHandle">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="color:#6fffaa;font-size:11px;font-weight:bold;font-family:monospace">⟨/⟩</span>
+              <span style="font-size:11px;color:#8899aa;letter-spacing:.04em;font-weight:600">SCRIPT KERNEL</span>
+              <span id="hooksActiveBadge" class="hooks-badge" style="display:none"></span>
+            </div>
+            <div class="bp-header-btns">
+              <button class="sc-btn" id="scriptClearHooks" title="Remove all active pipeline hooks">⊘ Hooks</button>
+              <button class="sc-btn" id="scriptRunAll" title="Run all cells">▶ Run All</button>
+              <button class="sc-btn" id="scriptAddCell" title="Add new cell">+ Cell</button>
+              <button class="sc-btn sc-btn-danger" id="scriptClearAll" title="Delete all cells">🗑 Clear</button>
+              <button class="sc-btn" id="scriptDrawerToggle" title="Toggle panel">▲</button>
             </div>
           </div>
-          <div id="guideCard" class="guide-card hidden">
-            <div class="guide-header">
-              <span id="guideConcept" class="guide-concept"></span>
-              <button id="guideClose" class="guide-close" title="Close guide">×</button>
-            </div>
-            <p id="guideBody" class="guide-body"></p>
-            <div id="guideHints" class="guide-hints"></div>
-            <button id="guideHintBtn" class="guide-hint-btn">Hint</button>
-          </div>
-        </section>
-        <div class="resize-handle" id="inspectorResizer"></div>
-
-        <aside class="panel inspector" id="inspectorPanel">
-          <h2>Inspector</h2>
-
-          <!-- GPU Shader Engine panel — shown only in GPU modes -->
-          <div id="asfPanel" class="asf-panel" style="display:none">
-            <div class="asf-header">
-              <span id="asfModeName" class="asf-mode-name">Lenia</span>
-              <span class="asf-badge">GPU</span>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">World</div>
-              <button id="asfRandomizeBtn" class="asf-btn">Randomize</button>
-              <button id="asfClearBtn" class="asf-btn">Clear</button>
-              <label class="asf-row">
-                <span>Cell Scale</span>
-                <select id="asfSimScale" class="asf-select">
-                  <option value="1">1× native</option>
-                  <option value="2">2×</option>
-                  <option value="3" selected>3×</option>
-                  <option value="4">4×</option>
-                  <option value="6">6×</option>
-                  <option value="8">8×</option>
-                </select>
-              </label>
-              <label class="asf-row">
-                <span>Density</span>
-                <input id="asfDensity" type="range" min="0.02" max="0.6" step="0.01" value="0.15" class="asf-slider" />
-                <span id="asfDensityOut" class="asf-val">0.15</span>
-              </label>
-            </div>
-
-            <div class="asf-section" id="asfLeniaSection">
-              <div class="asf-section-title">Growth</div>
-              <label class="asf-row">
-                <span title="Target neighborhood density for growth">μ (mu)</span>
-                <input id="asfMu" type="range" min="0.01" max="0.5" step="0.001" value="0.135" class="asf-slider" />
-                <span id="asfMuOut" class="asf-val">0.135</span>
-              </label>
-              <label class="asf-row">
-                <span title="Width of the growth bell curve">σ (sigma)</span>
-                <input id="asfSigma" type="range" min="0.001" max="0.1" step="0.0005" value="0.015" class="asf-slider" />
-                <span id="asfSigmaOut" class="asf-val">0.015</span>
-              </label>
-              <label class="asf-row">
-                <span title="Time step — smaller = smoother, larger = faster">dt</span>
-                <input id="asfDt" type="range" min="0.01" max="1.0" step="0.005" value="0.1" class="asf-slider" />
-                <span id="asfDtOut" class="asf-val">0.1</span>
-              </label>
-            </div>
-
-            <div class="asf-section" id="asfGsSection" style="display:none">
-              <div class="asf-section-title">Reaction-Diffusion</div>
-              <label class="asf-row">
-                <span title="Feed rate — how fast A is replenished">F</span>
-                <input id="asfF" type="range" min="0.01" max="0.1" step="0.0005" value="0.0545" class="asf-slider" />
-                <span id="asfFOut" class="asf-val">0.0545</span>
-              </label>
-              <label class="asf-row">
-                <span title="Kill rate — how fast B is consumed">k</span>
-                <input id="asfK" type="range" min="0.04" max="0.075" step="0.0005" value="0.0620" class="asf-slider" />
-                <span id="asfKOut" class="asf-val">0.0620</span>
-              </label>
-              <div class="asf-gs-presets">
-                <button class="asf-gs-preset" data-f="0.0545" data-k="0.0620" title="Coral/fingerprint">Coral</button>
-                <button class="asf-gs-preset" data-f="0.0367" data-k="0.0649" title="Replicating spots">Mitosis</button>
-                <button class="asf-gs-preset" data-f="0.029"  data-k="0.057"  title="Maze channels">Maze</button>
-                <button class="asf-gs-preset" data-f="0.039"  data-k="0.058"  title="Pulse waves">Pulse</button>
-                <button class="asf-gs-preset" data-f="0.014"  data-k="0.054"  title="Soliton gliders">Soliton</button>
-                <button class="asf-gs-preset" data-f="0.025"  data-k="0.060"  title="Worms">Worms</button>
-              </div>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">Display</div>
-              <label class="asf-row">
-                <span>Colormap</span>
-                <select id="asfColormap" class="asf-select">
-                  <optgroup label="Classic">
-                    <option value="ocean" selected>Ocean</option>
-                    <option value="viridis">Viridis</option>
-                    <option value="plasma">Plasma</option>
-                    <option value="magma">Magma</option>
-                    <option value="twilight">Twilight</option>
-                    <option value="grayscale">Grayscale</option>
-                  </optgroup>
-                  <optgroup label="Biological">
-                    <option value="organelle">Organelle</option>
-                    <option value="neon">Neon Bioluminescent</option>
-                    <option value="lava">Lava / Infrared</option>
-                  </optgroup>
-                </select>
-              </label>
-              <label class="asf-row">
-                <span title="Edge/membrane highlight strength">Edge</span>
-                <input id="asfEdgeStr" type="range" min="0" max="8" step="0.25" value="0" class="asf-slider" />
-                <span id="asfEdgeStrOut" class="asf-val">0.0</span>
-              </label>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">Adaptive Density</div>
-              <label class="asf-row">
-                <input type="checkbox" id="asfAdaptiveEnabled" />
-                <span>Auto-regulate</span>
-              </label>
-              <label class="asf-row">
-                <span title="Target average cell density">Target</span>
-                <input id="asfAdaptiveTarget" type="range" min="0.05" max="0.55" step="0.01" value="0.15" class="asf-slider" />
-                <span id="asfAdaptiveTargetOut" class="asf-val">0.15</span>
-              </label>
-              <label class="asf-row">
-                <span title="How aggressively to correct density">Strength</span>
-                <input id="asfAdaptiveStr" type="range" min="0.0005" max="0.03" step="0.0005" value="0.008" class="asf-slider" />
-                <span id="asfAdaptiveStrOut" class="asf-val">0.008</span>
-              </label>
-              <div id="asfDensityReading" class="asf-density-reading">density: —</div>
-            </div>
-
-            <div class="asf-section" id="asfFractalSection" style="display:none">
-              <div class="asf-section-title">Fractal Field</div>
-              <label class="asf-row">
-                <span>Julia Re</span>
-                <input id="asfFracCR" type="range" min="-2" max="2" step="0.0001" value="-0.7269" class="asf-slider" />
-                <span id="asfFracCROut" class="asf-val">-0.7269</span>
-              </label>
-              <label class="asf-row">
-                <span>Julia Im</span>
-                <input id="asfFracCI" type="range" min="-2" max="2" step="0.0001" value="0.1889" class="asf-slider" />
-                <span id="asfFracCIOut" class="asf-val">0.1889</span>
-              </label>
-              <label class="asf-row">
-                <input type="checkbox" id="asfFracAnimate" />
-                <span>Animate C (orbit)</span>
-              </label>
-              <div class="asf-row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
-                <button class="asf-frac-preset asf-btn" data-r="-0.7269" data-i="0.1889">Dendrite</button>
-                <button class="asf-frac-preset asf-btn" data-r="-0.8" data-i="0.156">Basilica</button>
-                <button class="asf-frac-preset asf-btn" data-r="-0.4" data-i="0.6">Spiral</button>
-                <button class="asf-frac-preset asf-btn" data-r="0.285" data-i="0.01">Rabbit</button>
-                <button class="asf-frac-preset asf-btn" data-r="-0.7" data-i="0.27">San Marco</button>
-                <button class="asf-frac-preset asf-btn" data-r="-0.70176" data-i="-0.3842">Dragon</button>
-              </div>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">Creatures</div>
-              <div id="asfCreatureList" class="asf-creature-list"></div>
-            </div>
-
-            <div class="asf-section" id="asfKernelSection">
-              <div class="asf-section-title">Kernels</div>
-              <div id="asfKernelList"></div>
-            </div>
-
-            <div class="asf-section" id="asfGlslSection" style="display:none">
-              <div class="asf-section-title">Growth GLSL</div>
-              <textarea id="asfGlslEditor" class="asf-glsl-editor" rows="8" spellcheck="false" autocomplete="off" placeholder="// pot.r/g/b = kernel potentials&#10;// state.r/g/b = current state&#10;// uDt = timestep&#10;// write to fragNext"></textarea>
-              <div class="asf-row" style="margin-top:4px;gap:8px">
-                <button id="asfGlslCompileBtn" class="asf-btn" style="flex:0 0 auto">Compile</button>
-                <span id="asfGlslStatus" class="asf-glsl-status"></span>
-              </div>
-              <pre id="asfGlslError" class="asf-glsl-error"></pre>
-              <div class="asf-glsl-ref">
-                <code>leniaBell(u,mu,sigma)</code> — bell growth<br>
-                <code>sigmoidSmooth(x,a,alpha)</code> — logistic<br>
-                <code>pot.r/g/b/a</code> — kernel potentials<br>
-                <code>state.r/g/b/a</code> — current state<br>
-                write to <code>fragNext</code>
-              </div>
-            </div>
-
-            <div class="asf-info">
-              <span id="asfStatus">GPU active</span>
-            </div>
-          </div>
-
-          <!-- Fractal Explorer panel — shown only in fractal mode -->
-          <div id="fractalPanel" class="asf-panel" style="display:none">
-            <div class="asf-header">
-              <span class="asf-mode-name">Fractal Explorer</span>
-              <span class="asf-badge">GPU</span>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">Set</div>
-              <div class="asf-row" style="gap:8px">
-                <button id="fracMandelbrot" class="asf-btn asf-btn-active">Mandelbrot</button>
-                <button id="fracJuliaBtn" class="asf-btn">Julia</button>
-              </div>
-              <div style="font-size:11px;color:#8ab;margin-top:4px;line-height:1.5">
-                Left-click Mandelbrot → explore that Julia set<br>
-                Right-click → set orbit animation center
-              </div>
-            </div>
-
-            <div class="asf-section" id="fracJuliaSection">
-              <div class="asf-section-title">Julia C</div>
-              <label class="asf-row">
-                <span>Re</span>
-                <input id="fracJCR" type="range" min="-2" max="2" step="0.0001" value="-0.7269" class="asf-slider" />
-                <span id="fracJCROut" class="asf-val">-0.7269</span>
-              </label>
-              <label class="asf-row">
-                <span>Im</span>
-                <input id="fracJCI" type="range" min="-2" max="2" step="0.0001" value="0.1889" class="asf-slider" />
-                <span id="fracJCIOut" class="asf-val">0.1889</span>
-              </label>
-              <div class="asf-row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
-                <button class="frac-preset asf-btn" data-r="-0.7269" data-i="0.1889">Dendrite</button>
-                <button class="frac-preset asf-btn" data-r="-0.8" data-i="0.156">Basilica</button>
-                <button class="frac-preset asf-btn" data-r="-0.4" data-i="0.6">Spiral</button>
-                <button class="frac-preset asf-btn" data-r="0.285" data-i="0.01">Rabbit</button>
-                <button class="frac-preset asf-btn" data-r="-0.7" data-i="0.27">San Marco</button>
-                <button class="frac-preset asf-btn" data-r="-0.70176" data-i="-0.3842">Dragon</button>
-              </div>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">Animate</div>
-              <label class="asf-row">
-                <input type="checkbox" id="fracAnimate" />
-                <span>Orbit Julia C</span>
-              </label>
-              <label class="asf-row">
-                <span>Speed</span>
-                <input id="fracAnimSpeed" type="range" min="0.01" max="3" step="0.01" value="0.3" class="asf-slider" />
-                <span id="fracAnimSpeedOut" class="asf-val">0.30</span>
-              </label>
-              <label class="asf-row">
-                <span>Radius</span>
-                <input id="fracAnimRadius" type="range" min="0.005" max="1.5" step="0.005" value="0.3" class="asf-slider" />
-                <span id="fracAnimRadiusOut" class="asf-val">0.300</span>
-              </label>
-            </div>
-
-            <div class="asf-section">
-              <div class="asf-section-title">Rendering</div>
-              <label class="asf-row">
-                <span>Iterations</span>
-                <input id="fracMaxIter" type="range" min="32" max="1024" step="16" value="256" class="asf-slider" />
-                <span id="fracMaxIterOut" class="asf-val">256</span>
-              </label>
-              <label class="asf-row">
-                <span>Palette</span>
-                <select id="fracScheme" class="asf-select">
-                  <option value="0">Electric</option>
-                  <option value="1">Ember</option>
-                  <option value="2">Ice</option>
-                  <option value="3">Cosmic</option>
-                  <option value="4">Neon</option>
-                  <option value="5">Void</option>
-                </select>
-              </label>
-              <label class="asf-row">
-                <span>Style</span>
-                <select id="fracDrawMode" class="asf-select">
-                  <option value="0">Smooth Escape</option>
-                  <option value="1">Orbit Trap</option>
-                </select>
-              </label>
-              <button id="fracReset" class="asf-btn" style="margin-top:6px;width:100%">Reset View</button>
-            </div>
-          </div>
-
-          <div id="inspectorBody">
-            <p>Select a prefab card to inspect details.</p>
-          </div>
-          <hr />
-          <h3>Shortcuts</h3>
-          <ul>
-            <li><kbd>Space</kbd> Play/Pause</li>
-            <li><kbd>N</kbd> Step forward</li>
-            <li><kbd>B</kbd> Step backward</li>
-            <li><kbd>C</kbd> Clear</li>
-            <li><kbd>D</kbd> Demo</li>
-            <li><kbd>R</kbd> Rotate 90°</li>
-            <li><kbd>F</kbd> Flip X</li>
-            <li><kbd>G</kbd> Toggle grid</li>
-            <li><kbd>1</kbd> Sandbox mode</li>
-            <li><kbd>2</kbd> Arcade mode</li>
-            <li><kbd>3</kbd> Sphere mode</li>
-            <li><kbd>4</kbd> Torus</li>
-            <li><kbd>5</kbd> Klein Bottle</li>
-            <li><kbd>6</kbd> Möbius Strip</li>
-            <li><kbd>7</kbd> Cylinder</li>
-            <li><kbd>Mouse Wheel</kbd> Zoom</li>
-            <li><kbd>Middle Drag</kbd> Pan (any mode)</li>
-            <li><kbd>Right Drag</kbd> Spin sphere</li>
-            <li><kbd>P</kbd> Paint mode</li>
-            <li><kbd>M</kbd> Move/pan mode</li>
-            <li><kbd>S</kbd> Select mode</li>
-            <li><kbd>V</kbd> Force-paint mode</li>
-            <li><kbd>Esc</kbd> Back to paint mode</li>
-            <li><kbd>X</kbd> Toggle paint type (A/B)</li>
-            <li><kbd>Del</kbd> Delete selection</li>
-            <li><kbd>Ctrl+C</kbd> Copy selection</li>
-            <li><kbd>Ctrl+X</kbd> Cut selection</li>
-            <li><kbd>Ctrl+V</kbd> Paste at cursor</li>
-          </ul>
-          <hr />
-          <h3>Rule Lab</h3>
-          <div id="ruleLab">
-            <label class="rl-row">
-              <span>Rule</span>
-              <input id="ruleInput" class="rl-input" type="text" value="B3/S23" spellcheck="false" autocomplete="off" />
-              <button id="ruleApply" class="rl-apply">Apply</button>
-            </label>
-            <div class="rl-presets">
-              <button class="rl-preset" data-rule="B3/S23" title="The classic">Conway</button>
-              <button class="rl-preset" data-rule="B36/S23" title="Has a self-replicator">HighLife</button>
-              <button class="rl-preset" data-rule="B2/S" title="Explosive — nothing survives">Seeds</button>
-              <button class="rl-preset" data-rule="B3678/S34678" title="Self-complementary">Day&amp;Night</button>
-              <button class="rl-preset" data-rule="B368/S245" title="Unusual glider shapes">Morley</button>
-              <button class="rl-preset" data-rule="B4678/S35678" title="Crystalline regions">Anneal</button>
-              <button class="rl-preset" data-rule="B3/S12345" title="Grows maze corridors">Maze</button>
-              <button class="rl-preset" data-rule="B35678/S5678" title="Amoeba-like blobs">Diamoeba</button>
-            </div>
-            <label class="rl-row">
-              <span>Kernel</span>
-              <select id="kernelShape" class="rl-select">
-                <option value="moore">Moore</option>
-                <option value="vonNeumann">Von Neumann</option>
-                <option value="ring">Ring</option>
-                <option value="cross">Cross</option>
-                <option value="hex">Hex</option>
-                <option value="knight">Knight</option>
+          <div class="bp-body" id="scriptPanelBody">
+            <div class="sc-samples-bar">
+              <span class="sc-samples-label">samples</span>
+              <select id="scriptSampleSelect" class="sc-sample-select">
+                <option value="">— pick a sample —</option>
+                <option value="log">Log population</option>
+                <option value="fill">Fill random region</option>
+                <option value="rules">Set rules (Day &amp; Night)</option>
+                <option value="hookStep">Hook: log every 60 gens</option>
+                <option value="hookPause">Hook: pause at pop 500</option>
+                <option value="overlay">Draw canvas overlay</option>
               </select>
-            </label>
-            <label class="rl-row">
-              <span>Radius</span>
-              <input id="kernelRadius" class="rl-radius" type="range" min="1" max="5" value="1" />
-              <span id="kernelRadiusOut">1</span>
-            </label>
-            <div class="rl-sep"></div>
-            <label class="rl-check">
-              <input type="checkbox" id="ruleCycleActive" /> Cycle rules
-            </label>
-            <label class="rl-row">
-              <span>Rule 2</span>
-              <input id="ruleInput2" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
-            </label>
-            <label class="rl-row">
-              <span>Period</span>
-              <input id="ruleCyclePeriod" class="rl-radius" type="range" min="10" max="500" step="10" value="60" />
-              <span id="ruleCyclePeriodOut">60</span>
-            </label>
-          </div>
-          <hr />
-          <h3>Physics</h3>
-          <div id="physicsLab">
-            <label class="rl-row">
-              <span>Drift X</span>
-              <input id="driftX" class="rl-radius" type="range" min="-3" max="3" step="0.25" value="0" />
-              <span id="driftXOut">0.00</span>
-            </label>
-            <label class="rl-row">
-              <span>Drift Y</span>
-              <input id="driftY" class="rl-radius" type="range" min="-3" max="3" step="0.25" value="0" />
-              <span id="driftYOut">0.00</span>
-            </label>
-            <label class="rl-check">
-              <input type="checkbox" id="colorByAge" /> Color by age
-            </label>
-            <label class="rl-check">
-              <input type="checkbox" id="showTrails" /> Show trails
-            </label>
-            <label class="rl-row">
-              <span>Decay</span>
-              <input id="trailDecay" class="rl-radius" type="range" min="0.7" max="0.99" step="0.01" value="0.88" />
-              <span id="trailDecayOut">0.88</span>
-            </label>
-            <div class="rl-sep"></div>
-            <label class="rl-check">
-              <input type="checkbox" id="repulseEnabled" /> Repulse old cells
-            </label>
-            <label class="rl-row">
-              <span>Age ≥</span>
-              <input id="repulseAge" class="rl-radius" type="range" min="1" max="100" step="1" value="20" />
-              <span id="repulseAgeOut">20</span>
-            </label>
-            <label class="rl-row">
-              <span>Strength</span>
-              <input id="repulseStrength" class="rl-radius" type="range" min="1" max="4" step="1" value="1" />
-              <span id="repulseStrengthOut">1</span>
-            </label>
-            <div class="rl-sep"></div>
-            <label class="rl-check">
-              <input type="checkbox" id="contigRepulseEnabled" /> Organism repulsion
-            </label>
-            <label class="rl-row">
-              <span>Radius</span>
-              <input id="contigRepulseRadius" class="rl-radius" type="range" min="5" max="100" step="5" value="30" />
-              <span id="contigRepulseRadiusOut">30</span>
-            </label>
-            <label class="rl-row">
-              <span>Force</span>
-              <input id="contigRepulseForce" class="rl-radius" type="range" min="0.1" max="8" step="0.1" value="1" />
-              <span id="contigRepulseForceOut">1.0</span>
-            </label>
-            <label class="rl-row">
-              <span>Min size</span>
-              <input id="contigMinSize" class="rl-radius" type="range" min="2" max="50" step="1" value="5" />
-              <span id="contigMinSizeOut">5</span>
-            </label>
-          </div>
-          <hr />
-          <h3>Wave Mode</h3>
-          <div id="waveLab">
-            <label class="rl-check">
-              <input type="checkbox" id="leniaModeChk" /> Lenia wave mode
-            </label>
-            <label class="rl-row">
-              <span>μ center</span>
-              <input id="leniaMu" class="rl-radius" type="range" min="0.01" max="0.5" step="0.01" value="0.15" />
-              <span id="leniaMuOut">0.15</span>
-            </label>
-            <label class="rl-row">
-              <span>σ width</span>
-              <input id="leniaSigma" class="rl-radius" type="range" min="0.001" max="0.1" step="0.001" value="0.017" />
-              <span id="leniaSigmaOut">0.017</span>
-            </label>
-            <label class="rl-row">
-              <span>Δt step</span>
-              <input id="leniaDt" class="rl-radius" type="range" min="0.01" max="0.5" step="0.01" value="0.1" />
-              <span id="leniaDtOut">0.10</span>
-            </label>
-          </div>
-          <hr />
-          <h3>Cell Types</h3>
-          <div id="typeLab">
-            <label class="rl-check">
-              <input type="checkbox" id="cellTypesChk" /> Enable cell types
-            </label>
-            <div class="rl-type-row">
-              <button id="typeABtn" class="rl-type-btn rl-type-active">Type A</button>
-              <button id="typeBBtn" class="rl-type-btn">Type B</button>
-              <span class="rl-type-hint"><kbd>X</kbd> toggle</span>
             </div>
-            <label class="rl-row">
-              <span>A rule</span>
-              <input id="typeARule" class="rl-input" type="text" value="B3/S23" spellcheck="false" autocomplete="off" />
-            </label>
-            <label class="rl-row">
-              <span>B rule</span>
-              <input id="typeBRule" class="rl-input" type="text" value="B36/S23" spellcheck="false" autocomplete="off" />
-            </label>
+            <div id="scriptCells" class="sc-cells-list"></div>
           </div>
-          <hr />
-          <h3>Rule Zones</h3>
-          <div id="zoneLab">
-            <div style="display:flex;gap:6px;margin-bottom:6px">
-              <button id="zoneDrawBtn" class="rl-type-btn" style="flex:1">Draw Zone</button>
-              <button id="zoneDelSelBtn" class="rl-type-btn" title="Delete selected zone">✕ Del</button>
-              <button id="zoneClearBtn" class="rl-type-btn" title="Remove all zones">Clear</button>
-            </div>
-            <div style="font-size:10px;color:#678;margin-bottom:6px;line-height:1.5">
-              Draw a rectangle on the canvas.<br>
-              Click a zone to select · drag to move · drag handles to resize.
-            </div>
-            <div id="zoneList"></div>
-          </div>
-          <hr />
-          <h3>Force Fields</h3>
-          <div id="fieldLab">
-            <div style="display:flex;gap:6px;margin-bottom:6px">
-              <button id="forcePaintToggle" class="rl-type-btn" style="flex:1">Draw Field  ⊛</button>
-              <button id="forceClearBtn" class="rl-type-btn" title="Remove all fields">Clear</button>
-            </div>
-            <div style="font-size:10px;color:#678;margin-bottom:6px;line-height:1.5">
-              Click+drag on canvas to draw a field.<br>
-              Click a field to select · drag to move · drag edge to resize.
-            </div>
-            <div id="ffList"></div>
-            <div class="rl-sep"></div>
-            <div style="font-size:10px;color:#678;margin-bottom:4px">New field defaults</div>
-            <div class="rl-type-row">
-              <button id="forceAttractBtn" class="rl-type-btn rl-type-active">Attract</button>
-              <button id="forceRepelBtn" class="rl-type-btn">Repel</button>
-            </div>
-            <label class="rl-row">
-              <span>Radius</span>
-              <input id="forceRadius" class="rl-radius" type="range" min="3" max="60" step="1" value="15" />
-              <span id="forceRadiusOut">15</span>
-            </label>
-            <label class="rl-row">
-              <span>Strength</span>
-              <input id="forceStrength" class="rl-radius" type="range" min="1" max="10" step="1" value="3" />
-              <span id="forceStrengthOut">3</span>
-            </label>
-            <label class="rl-row">
-              <span>Falloff</span>
-              <select id="forceFalloff" class="rl-select">
-                <option value="linear">Linear</option>
-                <option value="bell">Bell</option>
-                <option value="step">Step</option>
-              </select>
-            </label>
-            <div class="rl-sep"></div>
-            <label class="rl-check">
-              <input type="checkbox" id="densityFeedback" /> Density feedback
-            </label>
-            <label class="rl-row">
-              <span>Target</span>
-              <input id="densityTarget" class="rl-radius" type="range" min="50" max="3000" step="50" value="500" />
-              <span id="densityTargetOut">500</span>
-            </label>
-            <label class="rl-row">
-              <span>Strength</span>
-              <input id="densityStrength" class="rl-radius" type="range" min="1" max="5" step="1" value="1" />
-              <span id="densityStrengthOut">1</span>
-            </label>
-          </div>
-          <hr />
-          <h3>Capture Prefab</h3>
-          <div id="captureLab">
-            <button id="selModeBtn" class="rl-type-btn" style="width:100%;margin-bottom:4px;">Select Region <kbd>S</kbd></button>
-            <div id="selInfo" class="capture-info"></div>
-            <label class="rl-row">
-              <span>Name</span>
-              <input id="captureNameInput" class="rl-input" type="text" placeholder="Pattern name…" autocomplete="off" spellcheck="false" />
-            </label>
-            <label class="rl-row">
-              <span>Desc</span>
-              <input id="captureDescInput" class="rl-input" type="text" placeholder="Optional description…" autocomplete="off" spellcheck="false" />
-            </label>
-            <div style="display:flex;gap:5px;margin-top:3px;">
-              <button id="captureSaveBtn" class="rl-apply" style="flex:1;">Save Prefab</button>
-              <button id="clearSelBtn" class="rl-apply" style="flex:0 0 auto;">Clear</button>
-            </div>
-          </div>
-          <hr />
-          <h3>Analysis</h3>
-          <div id="analysisLab">
-            <button id="detectPeriodBtn" class="rl-apply" style="width:100%">Detect Period</button>
-            <div id="periodResult" class="capture-info"></div>
-            <div class="rl-sep"></div>
-            <div style="display:flex;gap:5px;">
-              <button id="exportRLEBtn" class="rl-apply" style="flex:1">Export RLE</button>
-              <button id="importRLEBtn" class="rl-apply" style="flex:1">Import RLE</button>
-            </div>
-            <textarea id="rleAreaInline" class="rle-area-inline" style="display:none" placeholder="Paste RLE here…" spellcheck="false"></textarea>
-            <button id="rleLoadInlineBtn" class="rl-apply" style="width:100%;display:none">Load from RLE</button>
-          </div>
-          <hr />
-          <h3>Heatmap</h3>
-          <div id="evoLab">
-            <label class="rl-check">
-              <input type="checkbox" id="heatmapMode" /> Show heatmap only
-            </label>
-            <label class="rl-check">
-              <input type="checkbox" id="heatmapOverlay" /> Overlay heatmap
-            </label>
-            <button id="clearHeatBtn" class="rl-apply" style="width:100%;margin-top:3px;">Clear heat</button>
-            <div class="rl-sep"></div>
-            <label class="rl-check">
-              <input type="checkbox" id="entrenchEnabled" /> Entrenched trails
-            </label>
-            <label class="rl-row">
-              <span>Thresh</span>
-              <input id="entrenchThresh" class="rl-radius" type="range" min="2" max="40" step="1" value="8" />
-              <span id="entrenchThreshOut">8</span>
-            </label>
-            <div class="rl-sep"></div>
-            <label class="rl-check">
-              <input type="checkbox" id="adaptRulesEnabled" /> Adaptive rules
-            </label>
-            <label class="rl-row">
-              <span>Target</span>
-              <input id="adaptTarget" class="rl-radius" type="range" min="50" max="2000" step="50" value="400" />
-              <span id="adaptTargetOut">400</span>
-            </label>
-            <label class="rl-row">
-              <span>Rate</span>
-              <input id="adaptRate" class="rl-radius" type="range" min="20" max="500" step="10" value="80" />
-              <span id="adaptRateOut">80</span>
-            </label>
-          </div>
-        </aside>
-      </main>
-    </div>
+        </div>
+
+      </div><!-- /workspace-area -->
+
+    </div><!-- /app-shell -->
 
     <!-- Notebook panel — slides in from right -->
     <aside id="notebookPanel" class="nb-panel">
@@ -722,9 +532,15 @@
       </div>
 
       <div class="nb-auto-section">
-        <div class="nb-section-label">Live Feed <span class="nb-auto-dot"></span></div>
+        <div class="nb-section-label">
+          Live Feed <span class="nb-auto-dot nb-auto-dot-off"></span>
+          <div class="nb-journal-btns">
+            <button id="nbAutoToggle" class="nb-pin-btn" title="Enable auto-detection">▶ Enable</button>
+            <button id="nbAutoClear" class="nb-pin-btn" title="Clear feed">✕ Clear</button>
+          </div>
+        </div>
         <div id="nbAutoFeed" class="nb-auto-feed">
-          <div class="nb-feed-empty">Auto-detection active — events will appear here as the simulation runs.</div>
+          <div class="nb-feed-empty">Auto-detection paused — press Enable to start.</div>
         </div>
       </div>
 
@@ -800,8 +616,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-    <script src="gpu/asf.js"></script>
-    <script src="gpu/fractal.js"></script>
+    <script src="lib/codemirror/codemirror.min.js"></script>
+    <script src="lib/codemirror/javascript.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

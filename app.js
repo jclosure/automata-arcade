@@ -130,9 +130,12 @@
     _ffIdSeq: 0,
     _ffSelected: null,
     _ffDragMode: null,   // null | "move" | "resize" | "draw"
-    _ffDragOrigin: null, // snapshot at drag start
+    _ffDragOrigin: null,
     _ffDrawing: null,    // {cx,cy,r} while drag-drawing
-    canvasMode: "paint",  // "paint" | "move" | "select" | "force" | "zone"
+    lenses: [],
+    _lensSelected: null,
+    canvasMode: "paint",  // "paint" | "move" | "select" | "object" | "force" | "zone" | "lens"
+    _prevCanvasMode: null, // mode to restore when leaving object mode
     forcePaintType: "attract",
     forcePaintRadius: 15,
     forcePaintStrength: 3,
@@ -151,7 +154,7 @@
       open: false,
       pinMode: false,
       _pendingPin: null,
-      autoEnabled: true,
+      autoEnabled: false,
       _watch: { lastPop: -1, peakPop: 0, stableSince: null, stableLogged: false, lastAutoGen: -Infinity },
       _nextId: 1,
       _colorIdx: 0,
@@ -273,6 +276,25 @@
   let _ruleInput2El = null;
   let heatMap = new Map();
   let entrenchMap = new Map();
+
+  // Lens state
+  let _lensIdSeq = 0;
+  let _lensOffscreen = null;
+  let _lensDragOp = null; // { type: 'draw'|'move'|'resize', id?, startX, startY, origCx?, origCy?, origR? }
+  let _lensZoomDefault = 4;
+
+  // Script Kernel state
+  let _scriptCells = [];
+  let _scriptIdSeq = 0;
+  const LS_SCRIPT = 'aa_script_v2';
+  const _kernel = {
+    globals: Object.create(null),
+    hooks: { afterStep: new Set(), beforeDraw: new Set(), afterDraw: new Set() },
+  };
+
+  // Sidebar state
+  let _sidebarCollapsed = false;
+  let _rightW = 300;
 
   const REQUIRED_PREFABS = [
     {
@@ -1402,9 +1424,7 @@
   };
 
   const MANIFOLD_MODES = ["sphere", "torus", "klein", "mobius", "cylinder"];
-  function is3DMode()     { return MANIFOLD_MODES.includes(state.mode); }
-  function isGPUMode()    { return window.ASF && ASF.isGPUMode(state.mode); }
-  function isFractalMode(){ return state.mode === 'fractal'; }
+  function is3DMode() { return MANIFOLD_MODES.includes(state.mode); }
 
   // 3D modes use torus wrapping for their topology; flat sandbox/arcade fall back to flat (infinite).
   function activeSurface() {
@@ -1561,7 +1581,6 @@
     let stackBonus = 0;
     let exclBonus = 0, exclMag = 0;
     for (const ff of state.forceFields) {
-      if (ff.visible === false) continue;
       const dist = Math.sqrt((col - ff.x) ** 2 + (row - ff.y) ** 2);
       if (dist >= ff.radius) continue;
       const u = dist / ff.radius;
@@ -2584,14 +2603,6 @@
     };
   }
 
-  // GPU world has Y-up (GL convention) — screen Y must be negated
-  function screenToGPUWorld(px, py) {
-    return {
-      x:  (px - canvas.width  / 2) / state.zoom + state.cameraX,
-      y: -(py - canvas.height / 2) / state.zoom + state.cameraY,
-    };
-  }
-
   function screenToGrid(px, py) {
     const w = screenToWorld(px, py);
     return {
@@ -2970,17 +2981,126 @@
     ctx.restore();
   }
 
+  function drawLenses() {
+    const visible = state.lenses.filter(l => l.visible !== false);
+    if (!visible.length) return;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Snapshot current canvas pixels before we overdraw
+    if (!_lensOffscreen || _lensOffscreen.width !== canvas.width || _lensOffscreen.height !== canvas.height) {
+      _lensOffscreen = document.createElement('canvas');
+      _lensOffscreen.width = canvas.width;
+      _lensOffscreen.height = canvas.height;
+    }
+    _lensOffscreen.getContext('2d').drawImage(canvas, 0, 0);
+
+    for (const lens of visible) {
+      const { cx, cy, radius, zoom } = lens;
+      const isSel = lens.id === state._lensSelected;
+
+      ctx.save();
+      // Dark fill so magnified area reads clearly
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#06090f';
+      ctx.fill();
+      // Clip to circle
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.clip();
+
+      // Source in physical pixels: region of (2r/zoom) centered on lens
+      const srcW = (radius * 2 / zoom) * dpr;
+      const srcH = (radius * 2 / zoom) * dpr;
+      const rawSX = cx * dpr - srcW / 2;
+      const rawSY = cy * dpr - srcH / 2;
+      const srcX = Math.max(0, rawSX);
+      const srcY = Math.max(0, rawSY);
+      const clampW = Math.min(srcW, _lensOffscreen.width - srcX);
+      const clampH = Math.min(srcH, _lensOffscreen.height - srcY);
+      // Dest: map clamped src to full 2r × 2r dest rect
+      const destX = cx - radius + (rawSX < 0 ? (-rawSX / dpr) * zoom : 0);
+      const destY = cy - radius + (rawSY < 0 ? (-rawSY / dpr) * zoom : 0);
+      ctx.drawImage(_lensOffscreen, srcX, srcY, clampW, clampH,
+        destX, destY, (clampW / dpr) * zoom, (clampH / dpr) * zoom);
+
+      ctx.restore();
+
+      // Decorations (outside clip)
+      ctx.save();
+
+      // Vignette ring
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      const vg = ctx.createRadialGradient(cx, cy, radius * 0.6, cx, cy, radius);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.35)');
+      ctx.fillStyle = vg;
+      ctx.fill();
+
+      // Border
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = isSel ? 'rgba(100,220,255,1)' : 'rgba(100,220,255,0.5)';
+      ctx.lineWidth = isSel ? 2.5 : 1.5;
+      ctx.stroke();
+
+      // Crosshair
+      ctx.strokeStyle = 'rgba(100,220,255,0.28)';
+      ctx.lineWidth = 0.75;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cx - radius * 0.18, cy); ctx.lineTo(cx + radius * 0.18, cy);
+      ctx.moveTo(cx, cy - radius * 0.18); ctx.lineTo(cx, cy + radius * 0.18);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Zoom label top-left
+      const labelSize = Math.max(9, Math.min(12, radius * 0.18));
+      ctx.fillStyle = 'rgba(100,220,255,0.9)';
+      ctx.font = `bold ${labelSize}px monospace`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(`${zoom}×`, cx - radius + 6, cy - radius + 5);
+
+      // Name bottom-center
+      if (lens.name) {
+        ctx.fillStyle = 'rgba(100,220,255,0.65)';
+        ctx.font = `${Math.max(8, labelSize - 1)}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillText(lens.name, cx, cy + radius - 5);
+      }
+
+      // Resize handle (bottom-right quadrant)
+      const hx = cx + radius * 0.707, hy = cy + radius * 0.707;
+      ctx.beginPath();
+      ctx.arc(hx, hy, isSel ? 6 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(100,220,255,0.9)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // Draw lens ghost while drawing
+    if (_lensDragOp?.type === 'draw' && _lensDragOp.curX !== undefined) {
+      const { startX, startY, curX, curY } = _lensDragOp;
+      const r = Math.sqrt((curX - startX) ** 2 + (curY - startY) ** 2);
+      if (r > 5) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(startX, startY, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(100,220,255,0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
   function draw() {
-    if (isFractalMode()) {
-      if (window.FractalEngine) FractalEngine.render(ctx, canvas.width, canvas.height);
-      return;
-    }
-    if (isGPUMode()) {
-      ASF.blit(ctx, canvas.width, canvas.height, state.cameraX, state.cameraY, state.zoom);
-      drawNotebookPins();
-      drawHover();
-      return;
-    }
     drawBackground();
     drawGrid();
     drawCells();
@@ -2991,6 +3111,7 @@
     drawSelection();
     drawNotebookPins();
     drawHover();
+    drawLenses();
   }
 
   function updateHud() {
@@ -3009,10 +3130,6 @@
     if (state.mode === "arcade" && state.levelState) {
       const level = LEVELS[state.levelIndex];
       objectiveText.textContent = `${level.objective} ${level.progress(state.levelState)}`;
-    } else if (isGPUMode()) {
-      const spec = window.ASF && ASF.SPECS[state.mode];
-      const name = spec ? spec.name : state.mode;
-      objectiveText.textContent = `${name} — GPU shader engine · Paint to add life · Pan to explore.`;
     } else if (is3DMode()) {
       const surface = SURFACES[state.mode];
       const surfName = surface ? surface.name : "Sphere";
@@ -3054,56 +3171,10 @@
   }
 
   function tickForward() {
-    if (isFractalMode()) return; // fractal has no discrete steps; animation runs in rAF
-    if (isGPUMode()) {
-      ASF.step();
-      state.generation += 1;
-      if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAutoGPU();
-      // Adaptive carrying-capacity control
-      if (state.gpuAdaptive && state.gpuAdaptive.enabled && state.generation % 45 === 0) {
-        const measured = ASF.estimateDensity();
-        const target = state.gpuAdaptive.target;
-        const str    = state.gpuAdaptive.strength;
-        const err    = measured - target;
-        const specId = ASF.getActiveSpecId();
-        if (specId === 'lenia' || specId === 'lenia-mc2') {
-          // Adjust mu: push toward target density via PI-like nudge on growth center
-          const mu = ASF.getParam('mu') || 0.135;
-          const newMu = Math.max(0.04, Math.min(0.45, mu + str * err));
-          ASF.setParam('mu', newMu);
-          const muEl = document.getElementById('asfMu');
-          const muOut = document.getElementById('asfMuOut');
-          if (muEl) { muEl.value = newMu; if (muOut) muOut.textContent = newMu.toFixed(4); }
-        } else if (specId === 'smoothlife') {
-          const dt = ASF.getParam('dt') || 0.05;
-          ASF.setParam('dt', Math.max(0.005, Math.min(0.2, dt - str * err * 0.5)));
-        }
-        // If density collapses, blend in fresh seeds without erasing survivors
-        if (measured < target * 0.12) {
-          if (specId === 'gray-scott') ASF.randomize();
-          else ASF.injectLife();
-        }
-        const rdEl = document.getElementById('asfDensityReading');
-        if (rdEl) rdEl.textContent = `density: ${measured.toFixed(3)}`;
-      }
-      return;
-    }
     if (state.leniaMode) stepLenia();
     else stepLife();
     snapshotNow();
     if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAuto();
-  }
-
-  function nbCheckAutoGPU() {
-    // Lightweight GPU mode auto-detection using generation counter as proxy
-    // Full pixel readback is expensive; only check every 150 gens
-    if (state.generation % 150 !== 0) return;
-    const gen = state.generation;
-    const nb = state.notebook;
-    const w = nb._watch;
-    if (gen - (w._lastAutoGenGPU || -Infinity) < 120) return;
-    w._lastAutoGenGPU = gen;
-    nbPushAutoFeed(gen, 0, `Gen ${gen} — GPU automaton running (${ASF.getActiveSpecId()})`);
   }
 
   function tickBackward() {
@@ -3145,15 +3216,6 @@
     if (!runTick.last) runTick.last = now;
     const dt = (now - runTick.last) / 1000;
     runTick.last = now;
-
-    // Tick fractal animation + sync Julia C to fractal-lenia if both active
-    if (window.FractalEngine) {
-      FractalEngine.tick(now);
-      if (FractalEngine.isAnimating() && window.ASF && ASF.getActiveSpecId() === 'fractal-lenia') {
-        const jc = FractalEngine.getJuliaC();
-        ASF.setFractalC(jc.r, jc.i);
-      }
-    }
 
     if (state.running) {
       state.tickCarry += dt;
@@ -3242,7 +3304,7 @@
 
     state.canvasMode = mode;
 
-    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair" };
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell", object: "default" };
     canvas.style.cursor = cursors[mode] || "default";
     if (mode !== "zone")  { state._zoneDrawing = null; state._zoneDragMode = null; }
     if (mode !== "force") { state._ffDrawing = null; state._ffDragMode = null; }
@@ -3260,6 +3322,10 @@
     const fpt = document.getElementById("forcePaintToggle");
     if (fpt) fpt.classList.toggle("rl-type-active", mode === "force");
 
+    // Sync lensDrawToggle
+    const ldt = document.getElementById("lensDrawToggle");
+    if (ldt) ldt.classList.toggle("rl-type-active", mode === "lens");
+
     // Update selInfo hint
     const selInfoEl = document.getElementById("selInfo");
     if (selInfoEl && mode === "select") selInfoEl.textContent = "Drag to select region";
@@ -3274,13 +3340,47 @@
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
 
-    // Fractal Explorer mode — all gestures captured here
-    if (isFractalMode() && window.FractalEngine) {
-      state.pointer.fracDownX = ev.clientX;
-      state.pointer.fracDownY = ev.clientY;
-      state.pointer.mode = "pan"; // drag always pans
-      ev.preventDefault();
-      return;
+    // Object mode: interact with any object, or exit to previous mode on empty click
+    if (state.canvasMode === "object" && ev.button === 0) {
+      const rectO = canvas.getBoundingClientRect();
+      const sxO = ev.clientX - rectO.left, syO = ev.clientY - rectO.top;
+      const hitO = _anyObjectHitTest(sxO, syO);
+      if (!hitO) {
+        const prev = state._prevCanvasMode || "paint";
+        state._prevCanvasMode = null;
+        setCanvasMode(prev);
+        ev.preventDefault(); return;
+      }
+      if (hitO.type === "field") {
+        state._ffSelected = hitO.id; state._zoneSelected = null; state._lensSelected = null;
+        const ff = state.forceFields.find(f => f.id === hitO.id);
+        if (ff) {
+          const { cx, cy } = _ffScreenCenter(ff);
+          state._ffDragMode = hitO.mode;
+          state._ffDragOrigin = { sx: sxO, sy: syO, fx: ff.x, fy: ff.y, fr: ff.radius, cx, cy };
+        }
+        fieldsPanelSync();
+      } else if (hitO.type === "zone") {
+        state._zoneSelected = hitO.id; state._ffSelected = null; state._lensSelected = null;
+        const zz = state.zones.find(z => z.id === hitO.id);
+        if (zz) {
+          const gxyO = screenToGrid(sxO, syO);
+          state._zoneDragMode = hitO.mode;
+          state._zoneDragOrigin = { mx: Math.floor(gxyO.x), my: Math.floor(gxyO.y), zx: zz.x, zy: zz.y, zw: zz.w, zh: zz.h };
+        }
+        zonesPanelSync();
+      } else if (hitO.type === "lens") {
+        state._lensSelected = hitO.id; state._ffSelected = null; state._zoneSelected = null;
+        state.pointer.mode = "lens";
+        const ll = state.lenses.find(l => l.id === hitO.id);
+        if (ll) {
+          _lensDragOp = hitO.mode === "resize"
+            ? { type: "resize", id: ll.id, startX: sxO, startY: syO, origR: ll.radius, origCx: ll.cx, origCy: ll.cy }
+            : { type: "move", id: ll.id, startX: sxO, startY: syO, origCx: ll.cx, origCy: ll.cy };
+        }
+        lensesPanelSync();
+      }
+      ev.preventDefault(); return;
     }
 
     // Zone mode: draw / select / move / resize zones
@@ -3319,26 +3419,15 @@
         ev.preventDefault(); return;
       }
 
+      // No zone hit — check cross-type objects before drawing
+      { const cH = _anyObjectHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+        if (cH && cH.type !== "zone") { _applyCrossTypeHit(cH, ev.clientX - rect.left, ev.clientY - rect.top); ev.preventDefault(); return; } }
+
       // Otherwise start drawing a new zone
       state._zoneSelected = null;
       state._zoneDrawing  = { x0: gx, y0: gy, x1: gx, y1: gy };
       state._zoneDragMode = "draw";
       ev.preventDefault(); return;
-    }
-
-    // GPU mode: paint by writing into the state texture
-    if (isGPUMode() && state.canvasMode === "paint") {
-      if (ev.button === 0 || ev.button === 2) {
-        const rect = canvas.getBoundingClientRect();
-        const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-        const value = ev.button === 2 ? 0.0 : 1.0;
-        const br = Math.max(3, Math.round(10 / ASF.getSimScale(state.mode)));
-        ASF.paintAt(wp.x, wp.y, br, value);
-        ev.preventDefault();
-        return;
-      }
-      if (ev.button === 1) { state.pointer.mode = "pan"; return; }
-      return;
     }
 
     // Notebook pin drop mode intercepts left-click
@@ -3371,6 +3460,47 @@
     const rect = canvas.getBoundingClientRect();
     const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
 
+    // In paint or move mode, clicking an object enters unified object mode
+    if ((state.canvasMode === "paint" || state.canvasMode === "move") && ev.button === 0) {
+      const rectE = canvas.getBoundingClientRect();
+      const sxE = ev.clientX - rectE.left, syE = ev.clientY - rectE.top;
+      const hitE = _anyObjectHitTest(sxE, syE);
+      if (hitE) {
+        state._prevCanvasMode = state.canvasMode;
+        setCanvasMode("object");
+        if (hitE.type === "field") {
+          state._ffSelected = hitE.id; state._zoneSelected = null; state._lensSelected = null;
+          const ff = state.forceFields.find(f => f.id === hitE.id);
+          if (ff) {
+            const { cx, cy } = _ffScreenCenter(ff);
+            state._ffDragMode = hitE.mode;
+            state._ffDragOrigin = { sx: sxE, sy: syE, fx: ff.x, fy: ff.y, fr: ff.radius, cx, cy };
+          }
+          fieldsPanelSync();
+        } else if (hitE.type === "zone") {
+          state._zoneSelected = hitE.id; state._ffSelected = null; state._lensSelected = null;
+          const zz = state.zones.find(z => z.id === hitE.id);
+          if (zz) {
+            const gxyE = screenToGrid(sxE, syE);
+            state._zoneDragMode = hitE.mode;
+            state._zoneDragOrigin = { mx: Math.floor(gxyE.x), my: Math.floor(gxyE.y), zx: zz.x, zy: zz.y, zw: zz.w, zh: zz.h };
+          }
+          zonesPanelSync();
+        } else if (hitE.type === "lens") {
+          state._lensSelected = hitE.id; state._ffSelected = null; state._zoneSelected = null;
+          state.pointer.mode = "lens";
+          const ll = state.lenses.find(l => l.id === hitE.id);
+          if (ll) {
+            _lensDragOp = hitE.mode === "resize"
+              ? { type: "resize", id: ll.id, startX: sxE, startY: syE, origR: ll.radius, origCx: ll.cx, origCy: ll.cy }
+              : { type: "move", id: ll.id, startX: sxE, startY: syE, origCx: ll.cx, origCy: ll.cy };
+          }
+          lensesPanelSync();
+        }
+        ev.preventDefault(); return;
+      }
+    }
+
     if (state.canvasMode === "move") {
       state.pointer.mode = "pan";
       canvas.style.cursor = "grabbing";
@@ -3399,6 +3529,10 @@
         state._selCells = cells;
         state._selMoving = true;
       } else {
+        // Not on the selection — check for cross-type object pick
+        const sxS = ev.clientX - rect.left, syS = ev.clientY - rect.top;
+        const cHS = _anyObjectHitTest(sxS, syS);
+        if (cHS) { _applyCrossTypeHit(cHS, sxS, syS); ev.preventDefault(); return; }
         state.pointer.mode = "select";
         state._selCells = null;
         state._selMoving = false;
@@ -3421,11 +3555,65 @@
         state._ffDragOrigin = { sx: sx4, sy: sy4, fx: hit.field.x, fy: hit.field.y, fr: hit.field.radius, cx, cy };
         fieldsPanelSync();
       } else {
+        // No field hit — check cross-type objects before drawing
+        const cH4 = _anyObjectHitTest(sx4, sy4);
+        if (cH4 && cH4.type !== "field") { _applyCrossTypeHit(cH4, sx4, sy4); ev.preventDefault(); return; }
         state._ffSelected = null;
         state._ffDragMode = "draw";
         state._ffDrawing  = { cx: sx4, cy: sy4, r: 0 };
       }
       state.pointer.mode = null;
+      return;
+    }
+
+    if (state.canvasMode === "lens") {
+      state.pointer.mode = "lens";
+      const rect2 = canvas.getBoundingClientRect();
+      const px = ev.clientX - rect2.left;
+      const py = ev.clientY - rect2.top;
+
+      if (ev.button === 2) {
+        // Right-click removes lens under cursor
+        state.lenses = state.lenses.filter(l => {
+          const dx = px - l.cx, dy = py - l.cy;
+          return Math.sqrt(dx * dx + dy * dy) > l.radius;
+        });
+        state._lensSelected = null;
+        _lensDragOp = null;
+        lensesPanelSync();
+        return;
+      }
+
+      // Check if clicking resize handle of a lens
+      for (const l of [...state.lenses].reverse()) {
+        if (l.visible === false) continue;
+        const hx = l.cx + l.radius * 0.707, hy = l.cy + l.radius * 0.707;
+        if (Math.sqrt((px - hx) ** 2 + (py - hy) ** 2) < 10) {
+          state._lensSelected = l.id;
+          _lensDragOp = { type: 'resize', id: l.id, startX: px, startY: py, origR: l.radius, origCx: l.cx, origCy: l.cy };
+          lensesPanelSync();
+          return;
+        }
+      }
+
+      // Check if clicking inside a lens (move)
+      for (const l of [...state.lenses].reverse()) {
+        if (l.visible === false) continue;
+        const dx = px - l.cx, dy = py - l.cy;
+        if (Math.sqrt(dx * dx + dy * dy) <= l.radius) {
+          state._lensSelected = l.id;
+          _lensDragOp = { type: 'move', id: l.id, startX: px, startY: py, origCx: l.cx, origCy: l.cy };
+          lensesPanelSync();
+          return;
+        }
+      }
+
+      // No lens hit — check cross-type objects before drawing
+      const cHL = _anyObjectHitTest(px, py);
+      if (cHL && cHL.type !== "lens") { _applyCrossTypeHit(cHL, px, py); ev.preventDefault(); return; }
+
+      // Start drawing a new lens
+      _lensDragOp = { type: 'draw', startX: px, startY: py, curX: px, curY: py };
       return;
     }
 
@@ -3441,36 +3629,37 @@
 
     // Update cursor when hovering (not dragging)
     if (!state.pointer.down) {
-      if (state.canvasMode === "select") {
-        const sel = state.selection;
-        const hc = state.hoverCell;
-        const overSel = sel && sel.w > 0 && hc
-          && hc.x >= sel.x && hc.x < sel.x + sel.w
-          && hc.y >= sel.y && hc.y < sel.y + sel.h;
-        canvas.style.cursor = overSel ? "move" : "crosshair";
-      } else if (state.canvasMode === "move") {
+      if (state.canvasMode === "move") {
         canvas.style.cursor = "grab";
-      } else if (state.canvasMode === "force") {
-        const rect6 = canvas.getBoundingClientRect();
-        const sx6 = ev.clientX - rect6.left, sy6 = ev.clientY - rect6.top;
-        const hit6 = _ffHitTest(sx6, sy6);
-        canvas.style.cursor = hit6 ? (hit6.mode === "resize" ? "ew-resize" : "move") : "crosshair";
-      } else if (state.canvasMode === "zone") {
-        const rect3 = canvas.getBoundingClientRect();
-        const gxy3  = screenToGrid(ev.clientX - rect3.left, ev.clientY - rect3.top);
-        const gx3   = Math.floor(gxy3.x), gy3 = Math.floor(gxy3.y);
-        const selZ3 = state.zones.find(z => z.id === state._zoneSelected);
-        if (selZ3) {
-          const h = _zoneHitHandle(ev.clientX - rect3.left, ev.clientY - rect3.top, selZ3);
-          if (h) {
-            const cmap = { 'resize-nw':'nw-resize','resize-n':'n-resize','resize-ne':'ne-resize',
-              'resize-w':'w-resize','resize-e':'e-resize',
-              'resize-sw':'sw-resize','resize-s':'s-resize','resize-se':'se-resize' };
-            canvas.style.cursor = cmap[h] || "crosshair";
-          } else if (gx3 >= selZ3.x && gx3 < selZ3.x + selZ3.w && gy3 >= selZ3.y && gy3 < selZ3.y + selZ3.h) {
-            canvas.style.cursor = "move";
-          } else { canvas.style.cursor = "crosshair"; }
-        } else { canvas.style.cursor = "crosshair"; }
+      } else if (state.canvasMode === "paint") {
+        const rectP = canvas.getBoundingClientRect();
+        const sxP = ev.clientX - rectP.left, syP = ev.clientY - rectP.top;
+        canvas.style.cursor = _anyObjectHitTest(sxP, syP) ? "pointer" : "crosshair";
+      } else if (state.canvasMode === "object" || state.canvasMode === "select" || state.canvasMode === "force" || state.canvasMode === "zone" || state.canvasMode === "lens") {
+        const rectH = canvas.getBoundingClientRect();
+        const sxH = ev.clientX - rectH.left, syH = ev.clientY - rectH.top;
+        // In select mode, hovering over the active selection box takes priority
+        if (state.canvasMode === "select") {
+          const sel = state.selection;
+          const hc  = state.hoverCell;
+          const overSel = sel && sel.w > 0 && hc
+            && hc.x >= sel.x && hc.x < sel.x + sel.w
+            && hc.y >= sel.y && hc.y < sel.y + sel.h;
+          if (overSel) { canvas.style.cursor = "move"; return; }
+        }
+        const hitH = _anyObjectHitTest(sxH, syH);
+        if (!hitH) {
+          canvas.style.cursor = state.canvasMode === "object" ? "default" : "crosshair";
+        } else if (hitH.mode === "move") {
+          canvas.style.cursor = "move";
+        } else if (hitH.mode === "resize") {
+          canvas.style.cursor = "ew-resize";
+        } else {
+          const RMAP = { 'resize-nw':'nw-resize','resize-n':'n-resize','resize-ne':'ne-resize',
+            'resize-w':'w-resize','resize-e':'e-resize',
+            'resize-sw':'sw-resize','resize-s':'s-resize','resize-se':'se-resize' };
+          canvas.style.cursor = RMAP[hitH.mode] || "crosshair";
+        }
       }
     }
 
@@ -3482,23 +3671,8 @@
     state.pointer.lastY = ev.clientY;
 
     if (state.pointer.mode === "pan") {
-      if (isFractalMode() && window.FractalEngine) {
-        FractalEngine.pan(dx, dy);
-      } else {
-        state.cameraX -= dx / state.zoom;
-        // GPU world is Y-up so pan direction flips
-        state.cameraY += (isGPUMode() ? 1 : -1) * dy / state.zoom;
-      }
-      return;
-    }
-
-    // GPU drag-paint
-    if (isGPUMode() && state.canvasMode === "paint" && state.pointer.down) {
-      const rect = canvas.getBoundingClientRect();
-      const wp = screenToGPUWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-      const value = (ev.buttons & 2) ? 0.0 : 1.0;
-      const br = Math.max(3, Math.round(10 / ASF.getSimScale(state.mode)));
-      ASF.paintAt(wp.x, wp.y, br, value);
+      state.cameraX -= dx / state.zoom;
+      state.cameraY -= dy / state.zoom;
       return;
     }
 
@@ -3516,7 +3690,7 @@
       return;
     }
 
-    if (state.canvasMode === "force" && state._ffDragMode) {
+    if ((state.canvasMode === "force" || state.canvasMode === "object") && state._ffDragMode) {
       const rect5 = canvas.getBoundingClientRect();
       const sx5 = ev.clientX - rect5.left, sy5 = ev.clientY - rect5.top;
       if (state._ffDragMode === "draw" && state._ffDrawing) {
@@ -3527,7 +3701,7 @@
       return;
     }
 
-    if (state.canvasMode === "zone" && state._zoneDragMode) {
+    if ((state.canvasMode === "zone" || state.canvasMode === "object") && state._zoneDragMode) {
       const rect2 = canvas.getBoundingClientRect();
       const gxy2  = screenToGrid(ev.clientX - rect2.left, ev.clientY - rect2.top);
       const gx2   = Math.floor(gxy2.x), gy2 = Math.floor(gxy2.y);
@@ -3552,6 +3726,26 @@
       if (selInfoEl) selInfoEl.textContent = `${state.selection.w} × ${state.selection.h}`;
     }
 
+    if (state.pointer.mode === "lens" && _lensDragOp) {
+      const rect2 = canvas.getBoundingClientRect();
+      const px = ev.clientX - rect2.left;
+      const py = ev.clientY - rect2.top;
+      if (_lensDragOp.type === 'draw') {
+        _lensDragOp.curX = px;
+        _lensDragOp.curY = py;
+      } else if (_lensDragOp.type === 'move') {
+        const l = state.lenses.find(x => x.id === _lensDragOp.id);
+        if (l) { l.cx = _lensDragOp.origCx + (px - _lensDragOp.startX); l.cy = _lensDragOp.origCy + (py - _lensDragOp.startY); }
+      } else if (_lensDragOp.type === 'resize') {
+        const l = state.lenses.find(x => x.id === _lensDragOp.id);
+        if (l) {
+          const dr = Math.sqrt((px - _lensDragOp.origCx) ** 2 + (py - _lensDragOp.origCy) ** 2);
+          l.radius = Math.max(20, dr);
+        }
+      }
+      return;
+    }
+
     if (state.pointer.mode === "paint") {
       const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
       setCell(gxgy.x, gxgy.y, state.pointer.paintValue === 1);
@@ -3563,83 +3757,32 @@
       canvas.releasePointerCapture(ev.pointerId);
     }
 
-    // Fractal mode: detect click (small drag) and act
-    if (isFractalMode() && window.FractalEngine) {
-      const ddx = ev.clientX - (state.pointer.fracDownX || ev.clientX);
-      const ddy = ev.clientY - (state.pointer.fracDownY || ev.clientY);
-      if (Math.hypot(ddx, ddy) < 6) {
-        const rect = canvas.getBoundingClientRect();
-        const sx = ev.clientX - rect.left;
-        const sy = ev.clientY - rect.top;
-        const w = FractalEngine.screenToWorld(sx, sy, canvas.width, canvas.height);
-        if (ev.button === 0 && FractalEngine.getType() === 0) {
-          // Left-click on Mandelbrot → jump to that Julia set
-          FractalEngine.setJuliaC(w.r, w.i);
-          FractalEngine.setType(1);
-          document.getElementById('fracMandelbrot')?.classList.remove('asf-btn-active');
-          document.getElementById('fracJuliaBtn')?.classList.add('asf-btn-active');
-        } else if (ev.button === 2) {
-          // Right-click → set orbit center for animation
-          const ao = FractalEngine.getAnimOrbit();
-          FractalEngine.setAnimOrbit(w.r, w.i, ao.r);
-          // Visual confirmation — flash the animate checkbox
-          const cb = document.getElementById('fracAnimate');
-          if (cb && !cb.checked) { cb.checked = true; FractalEngine.setAnimate(true); }
-        }
-      }
-      state.pointer.down = false;
-      state.pointer.mode = null;
-      return;
-    }
-
-    if (state.canvasMode === "force" && state._ffDragMode) {
-      if (state._ffDragMode === "draw" && state._ffDrawing) {
-        const d = state._ffDrawing;
-        const worldR = d.r / state.zoom;
-        if (worldR >= 2) {
-          const wc = screenToWorld(d.cx, d.cy);
-          const id = ++state._ffIdSeq;
-          state.forceFields.push({
-            id, x: wc.x, y: wc.y,
-            radius: Math.round(worldR),
-            strength: state.forcePaintStrength,
-            type: state.forcePaintType,
-            falloff: state.forcePaintFalloff || "linear",
-            name: `Field ${id}`,
+    if (state.pointer.mode === "lens" && _lensDragOp) {
+      if (_lensDragOp.type === 'draw') {
+        const rect2 = canvas.getBoundingClientRect();
+        // (curX/curY already updated in move)
+        const r = Math.sqrt((_lensDragOp.curX - _lensDragOp.startX) ** 2 + (_lensDragOp.curY - _lensDragOp.startY) ** 2);
+        if (r >= 15) {
+          const newLens = {
+            id: ++_lensIdSeq,
+            name: `Lens ${_lensIdSeq}`,
+            cx: _lensDragOp.startX,
+            cy: _lensDragOp.startY,
+            radius: r,
+            zoom: _lensZoomDefault,
             visible: true,
-          });
-          state._ffSelected = id;
-          fieldsPanelSync();
+          };
+          state.lenses.push(newLens);
+          state._lensSelected = newLens.id;
+          lensesPanelSync();
         }
-        state._ffDrawing = null;
+      } else if (_lensDragOp.type === 'move' || _lensDragOp.type === 'resize') {
+        lensesPanelSync();
       }
-      state._ffDragMode = null;
-      state._ffDragOrigin = null;
-      state.pointer.down = false; state.pointer.mode = null; return;
-    }
-
-    if (state.canvasMode === "zone" && state._zoneDragMode) {
-      if (state._zoneDragMode === "draw" && state._zoneDrawing) {
-        const d = state._zoneDrawing;
-        const x1 = Math.min(d.x0, d.x1), y1 = Math.min(d.y0, d.y1);
-        const x2 = Math.max(d.x0, d.x1), y2 = Math.max(d.y0, d.y1);
-        const w = x2 - x1 + 1, h = y2 - y1 + 1;
-        if (w >= 2 && h >= 2) {
-          const id = ++state._zoneIdSeq;
-          const color = ZONE_COLORS[(state.zones.length) % ZONE_COLORS.length];
-          state.zones.push({
-            id, x: x1, y: y1, w, h,
-            ruleB: new Set([3]), ruleS: new Set([2,3]),
-            name: `Zone ${id}`, color,
-          });
-          state._zoneSelected = id;
-          zonesPanelSync();
-        }
-        state._zoneDrawing = null;
-      }
-      state._zoneDragMode = null;
-      state._zoneDragOrigin = null;
-      state.pointer.down = false; state.pointer.mode = null; return;
+      _lensDragOp = null;
+      state.pointer.mode = null;
+      state.pointer.down = false;
+      return;
     }
 
     if (state.pointer.mode === "move" && state._selMoving && state._selCells) {
@@ -3658,6 +3801,65 @@
       if (selInfoEl) selInfoEl.textContent = `${sel.w} × ${sel.h}`;
     }
 
+    if ((state.canvasMode === "force" || state.canvasMode === "object") && state._ffDragMode) {
+      if (state._ffDragMode === "draw" && state._ffDrawing) {
+        const d = state._ffDrawing;
+        const worldR = d.r / state.zoom;
+        if (worldR >= 2) {
+          const wc = screenToWorld(d.cx, d.cy);
+          const id = ++state._ffIdSeq;
+          state.forceFields.push({
+            id, x: wc.x, y: wc.y,
+            radius: Math.round(worldR),
+            type: state.forcePaintType,
+            strength: state.forcePaintStrength,
+            falloff: state.forcePaintFalloff || "linear",
+            combine: true,
+            visible: true,
+            name: `Field ${id}`,
+          });
+          state._ffSelected = id;
+          fieldsPanelSync();
+        }
+        state._ffDrawing = null;
+      }
+      state._ffDragMode = null;
+      state._ffDragOrigin = null;
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      return;
+    }
+
+    if ((state.canvasMode === "zone" || state.canvasMode === "object") && state._zoneDragMode) {
+      if (state._zoneDragMode === "draw" && state._zoneDrawing) {
+        const d = state._zoneDrawing;
+        const x = Math.min(d.x0, d.x1);
+        const y = Math.min(d.y0, d.y1);
+        const w = Math.abs(d.x1 - d.x0) + 1;
+        const h = Math.abs(d.y1 - d.y0) + 1;
+        if (w >= 2 && h >= 2) {
+          const id = ++state._zoneIdSeq;
+          state.zones.push({
+            id, x, y, w, h,
+            ruleB: new Set([...state.ruleB]),
+            ruleS: new Set([...state.ruleS]),
+            name: `Zone ${id}`,
+            color: ZONE_COLORS[(id - 1) % ZONE_COLORS.length],
+            combine: true,
+            visible: true,
+          });
+          state._zoneSelected = id;
+          zonesPanelSync();
+        }
+        state._zoneDrawing = null;
+      }
+      state._zoneDragMode = null;
+      state._zoneDragOrigin = null;
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      return;
+    }
+
     state.pointer.down = false;
     state.pointer.mode = null;
     // Restore mode cursor after drag
@@ -3670,22 +3872,23 @@
     const rect = canvas.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
-    const zoomFactor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
 
-    if (isFractalMode() && window.FractalEngine) {
-      FractalEngine.zoomAt(mx, my, canvas.width, canvas.height, zoomFactor);
-      return;
+    // If hovering over a lens, adjust lens zoom instead of camera zoom
+    for (const l of [...state.lenses].reverse()) {
+      if (l.visible === false) continue;
+      const dx = mx - l.cx, dy = my - l.cy;
+      if (Math.sqrt(dx * dx + dy * dy) <= l.radius) {
+        l.zoom = Math.max(1, Math.min(16, l.zoom + (ev.deltaY < 0 ? 1 : -1)));
+        lensesPanelSync();
+        return;
+      }
     }
 
-    const toWorld = isGPUMode() ? screenToGPUWorld : screenToWorld;
-    const before = toWorld(mx, my);
-    if (isGPUMode()) {
-      const minZ = ASF.getSimScale(state.mode);
-      state.zoom = Math.max(minZ, Math.min(minZ * 8, state.zoom * zoomFactor));
-    } else {
-      state.zoom = Math.max(4, Math.min(60, state.zoom * zoomFactor));
-    }
-    const after = toWorld(mx, my);
+    const before = screenToWorld(mx, my);
+    const zoomFactor = ev.deltaY < 0 ? 1.1 : 0.9;
+    state.zoom = Math.max(4, Math.min(60, state.zoom * zoomFactor));
+    const after = screenToWorld(mx, my);
+
     state.cameraX += before.x - after.x;
     state.cameraY += before.y - after.y;
   }
@@ -3832,69 +4035,30 @@
     return card;
   }
 
-  function buildPalette(query = "") {
+  function buildPalette() {
     paletteList.innerHTML = "";
-    const q = query.trim().toLowerCase();
-    const matches = (p) => !q || p.name.toLowerCase().includes(q)
-      || (p.type || "").toLowerCase().includes(q)
-      || (p.desc || "").toLowerCase().includes(q)
-      || (p.category || "").toLowerCase().includes(q);
-
-    const customs = lsLoad(LS_CUSTOM_PREFABS).filter(matches);
-    const builtins = PREFABS.filter(matches);
-
-    if (customs.length === 0 && builtins.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "palette-empty";
-      empty.textContent = `No patterns match "${query}"`;
-      paletteList.appendChild(empty);
-      return;
-    }
-
+    const customs = lsLoad(LS_CUSTOM_PREFABS);
     if (customs.length > 0) {
       const hdr = document.createElement("div");
       hdr.className = "palette-section-hdr";
       hdr.textContent = "Custom";
       paletteList.appendChild(hdr);
-      for (const p of [...customs].reverse()) paletteList.appendChild(makePaletteCard(p, true));
-    }
-
-    const sections = ["Required", "Custom", "Circuit"];
-    const bySection = Object.fromEntries(sections.map(s => [s, builtins.filter(p => p.category === s)]));
-
-    if (q) {
-      if (customs.length > 0 && builtins.length > 0) {
-        const hdr2 = document.createElement("div");
-        hdr2.className = "palette-section-hdr";
-        hdr2.textContent = "Built-in";
-        paletteList.appendChild(hdr2);
+      for (const p of [...customs].reverse()) {
+        paletteList.appendChild(makePaletteCard(p, true));
       }
-      for (const p of builtins) paletteList.appendChild(makePaletteCard(p, false));
-    } else {
-      if (customs.length > 0) {
-        const hdr2 = document.createElement("div");
-        hdr2.className = "palette-section-hdr";
-        hdr2.textContent = "Built-in";
-        paletteList.appendChild(hdr2);
-      }
-      for (const sec of sections) {
-        if (bySection[sec].length === 0) continue;
-        const hdr = document.createElement("div");
-        hdr.className = "palette-section-hdr palette-section-hdr--sub";
-        hdr.textContent = sec;
-        paletteList.appendChild(hdr);
-        for (const p of bySection[sec]) paletteList.appendChild(makePaletteCard(p, false));
-      }
+      const hdr2 = document.createElement("div");
+      hdr2.className = "palette-section-hdr";
+      hdr2.textContent = "Built-in";
+      paletteList.appendChild(hdr2);
     }
-
-    const allVisible = [...lsLoad(LS_CUSTOM_PREFABS).filter(matches).reverse(), ...builtins];
-    const firstPrefab = allVisible[0] ? (getPrefabById(allVisible[0].id) || allVisible[0]) : PREFABS[0];
-    const currentVisible = allVisible.some(p => p.id === state.selectedPrefabId);
-    if (!currentVisible) {
-      state.selectedPrefabId = firstPrefab.id;
-      renderInspector(firstPrefab);
+    for (const prefab of PREFABS) {
+      paletteList.appendChild(makePaletteCard(prefab, false));
     }
+    const firstId = customs.length > 0 ? customs[customs.length - 1].id : PREFABS[0].id;
+    const firstPrefab = getPrefabById(firstId) || PREFABS[0];
+    state.selectedPrefabId = firstPrefab.id;
     refreshPaletteSelection();
+    renderInspector(firstPrefab);
   }
 
   function refreshPaletteSelection() {
@@ -3956,43 +4120,8 @@
     });
 
     modeSelect.addEventListener("change", () => {
-      const prevMode = state.mode;
       state.mode = modeSelect.value;
-
-      // Tear down GPU if leaving a GPU mode
-      if (window.ASF && ASF.isGPUMode(prevMode) && !ASF.isGPUMode(state.mode)) {
-        ASF.deactivate();
-        asfPanelSetVisible(false);
-      }
-
-      if (isFractalMode()) {
-        canvas.style.display = "block";
-        sphereCanvas.style.display = "none";
-        state.levelState = null;
-        setOverlay("");
-        fractalPanelSetVisible(true);
-        canvas.style.cursor = "crosshair";
-      } else if (isGPUMode()) {
-        canvas.style.display = "block";
-        sphereCanvas.style.display = "none";
-        state.levelState = null;
-        setOverlay("");
-        fractalPanelSetVisible(false);
-        const ok = ASF.activate(state.mode, null, canvas.width, canvas.height);
-        if (!ok) {
-          setOverlay("WebGL 2 not available — GPU modes require a modern browser.");
-          state.mode = "sandbox";
-          modeSelect.value = "sandbox";
-        } else {
-          const [gW, gH] = ASF.getWorldSize();
-          const simScale = ASF.getSimScale(state.mode);
-          state.cameraX = gW / 2;
-          state.cameraY = gH / 2;
-          state.zoom    = simScale;
-          asfPanelSetVisible(true);
-          asfSyncPanel();
-        }
-      } else if (is3DMode()) {
+      if (is3DMode()) {
         canvas.style.display = "none";
         sphereCanvas.style.display = "block";
         if (state.mode === "sphere") {
@@ -4007,15 +4136,12 @@
         } else {
           initManifoldRenderer();
         }
-        fractalPanelSetVisible(false);
         init3DInput();
         state.levelState = null;
         setOverlay("");
       } else {
-        fractalPanelSetVisible(false);
         canvas.style.display = "block";
         sphereCanvas.style.display = "none";
-        canvas.style.cursor = "";
         if (state.mode === "sandbox") {
           state.levelState = null;
           setOverlay("");
@@ -4140,6 +4266,12 @@
         state._ffSelected = null;
         fieldsPanelSync();
         ev.preventDefault();
+      } else if ((ev.key === "Delete" || ev.key === "Backspace") && state._lensSelected != null) {
+        state.lenses = state.lenses.filter(l => l.id !== state._lensSelected);
+        state._lensSelected = null;
+        _lensDragOp = null;
+        lensesPanelSync();
+        ev.preventDefault();
       } else if ((ev.key === "Delete" || ev.key === "Backspace") && hasSel) {
         deleteSelCells();
         state.selection = null;
@@ -4214,9 +4346,17 @@
         if (state.canvasMode !== "select") state.selection = null;
       } else if (ev.key.toLowerCase() === "v" && !mod) {
         setCanvasMode(state.canvasMode === "force" ? "paint" : "force");
+      } else if (ev.key.toLowerCase() === "l" && !mod) {
+        setCanvasMode(state.canvasMode === "lens" ? "paint" : "lens");
       } else if (ev.key === "Escape") {
-        setCanvasMode("paint");
-        state.selection = null;
+        if (state.canvasMode === "object") {
+          const prev = state._prevCanvasMode || "paint";
+          state._prevCanvasMode = null;
+          setCanvasMode(prev);
+        } else {
+          setCanvasMode("paint");
+          state.selection = null;
+        }
         ev.preventDefault();
       } else if (ev.key.toLowerCase() === "x" && !mod) {
         if (state.cellTypesEnabled) {
@@ -4995,6 +5135,80 @@
     return null;
   }
 
+  // Hit-test across ALL object types (fields, zones, lenses).
+  // sx/sy are CSS-pixel canvas coordinates.
+  // Returns { type, id, mode } or null.
+  function _anyObjectHitTest(sx, sy) {
+    // Force fields
+    const ffHit = _ffHitTest(sx, sy);
+    if (ffHit) return { type: "field", id: ffHit.field.id, mode: ffHit.mode };
+
+    // Zones — check selected zone handles first, then all zone bodies
+    const gxy = screenToGrid(sx, sy);
+    const gx = Math.floor(gxy.x), gy = Math.floor(gxy.y);
+    const selZ = state.zones.find(z => z.id === state._zoneSelected);
+    if (selZ && selZ.visible !== false) {
+      const handle = _zoneHitHandle(sx, sy, selZ);
+      if (handle) return { type: "zone", id: selZ.id, mode: handle };
+      if (gx >= selZ.x && gx < selZ.x + selZ.w && gy >= selZ.y && gy < selZ.y + selZ.h)
+        return { type: "zone", id: selZ.id, mode: "move" };
+    }
+    for (let i = state.zones.length - 1; i >= 0; i--) {
+      const z = state.zones[i];
+      if (z.visible === false || z.id === state._zoneSelected) continue;
+      if (gx >= z.x && gx < z.x + z.w && gy >= z.y && gy < z.y + z.h)
+        return { type: "zone", id: z.id, mode: "move" };
+    }
+
+    // Lenses
+    for (const l of [...state.lenses].reverse()) {
+      if (l.visible === false) continue;
+      const hx = l.cx + l.radius * 0.707, hy = l.cy + l.radius * 0.707;
+      if (Math.hypot(sx - hx, sy - hy) < 10) return { type: "lens", id: l.id, mode: "resize" };
+      if (Math.hypot(sx - l.cx, sy - l.cy) <= l.radius) return { type: "lens", id: l.id, mode: "move" };
+    }
+
+    return null;
+  }
+
+  // Switch to an object's native mode and start a move/resize drag.
+  // Called when user clicks an object type different from the current canvasMode.
+  function _applyCrossTypeHit(hit, sx, sy) {
+    if (hit.type === "field") {
+      setCanvasMode("force");
+      state._ffSelected = hit.id;
+      const ff = state.forceFields.find(f => f.id === hit.id);
+      if (ff) {
+        const { cx, cy } = _ffScreenCenter(ff);
+        state._ffDragMode   = hit.mode;
+        state._ffDragOrigin = { sx, sy, fx: ff.x, fy: ff.y, fr: ff.radius, cx, cy };
+      }
+      state.pointer.mode = null;
+      fieldsPanelSync();
+    } else if (hit.type === "zone") {
+      setCanvasMode("zone");
+      state._zoneSelected = hit.id;
+      const zz = state.zones.find(z => z.id === hit.id);
+      if (zz) {
+        const gxy = screenToGrid(sx, sy);
+        state._zoneDragMode   = hit.mode;
+        state._zoneDragOrigin = { mx: Math.floor(gxy.x), my: Math.floor(gxy.y), zx: zz.x, zy: zz.y, zw: zz.w, zh: zz.h };
+      }
+      zonesPanelSync();
+    } else if (hit.type === "lens") {
+      setCanvasMode("lens");
+      state._lensSelected = hit.id;
+      state.pointer.mode = "lens";
+      const ll = state.lenses.find(l => l.id === hit.id);
+      if (ll) {
+        _lensDragOp = hit.mode === "resize"
+          ? { type: "resize", id: ll.id, startX: sx, startY: sy, origR: ll.radius, origCx: ll.cx, origCy: ll.cy }
+          : { type: "move",   id: ll.id, startX: sx, startY: sy, origCx: ll.cx, origCy: ll.cy };
+      }
+      lensesPanelSync();
+    }
+  }
+
   function _ffApplyDrag(sx, sy) {
     const o  = state._ffDragOrigin;
     const ff = state.forceFields.find(f => f.id === state._ffSelected);
@@ -5481,6 +5695,420 @@
       state.adaptRate = Number(adaptRateEl.value);
       adaptRateOut.textContent = adaptRateEl.value;
     });
+  }
+
+  // ── Lens Lab ─────────────────────────────────────────────────────────────
+  function lensesPanelSync() {
+    const list = document.getElementById("lensList");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const l of state.lenses) {
+      const card = document.createElement("div");
+      card.className = "lens-card" + (l.id === state._lensSelected ? " lens-card-selected" : "");
+
+      const nameEl = document.createElement("input");
+      nameEl.className = "lens-card-name";
+      nameEl.value = l.name;
+      nameEl.spellcheck = false;
+      nameEl.addEventListener("change", () => { l.name = nameEl.value; });
+
+      const zoomBadge = document.createElement("span");
+      zoomBadge.className = "lens-zoom-badge";
+      zoomBadge.textContent = `${l.zoom}×`;
+
+      const eyeBtn = document.createElement("button");
+      eyeBtn.className = "zone-del-btn";
+      eyeBtn.title = l.visible === false ? "Show" : "Hide";
+      eyeBtn.textContent = l.visible === false ? "🙈" : "👁";
+      eyeBtn.addEventListener("click", () => { l.visible = !l.visible; lensesPanelSync(); });
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "zone-del-btn";
+      delBtn.title = "Delete";
+      delBtn.textContent = "✕";
+      delBtn.addEventListener("click", () => {
+        state.lenses = state.lenses.filter(x => x.id !== l.id);
+        if (state._lensSelected === l.id) state._lensSelected = null;
+        lensesPanelSync();
+      });
+
+      card.addEventListener("click", (e) => {
+        if ([nameEl, eyeBtn, delBtn].includes(e.target)) return;
+        state._lensSelected = l.id;
+        lensesPanelSync();
+      });
+
+      card.appendChild(nameEl);
+      card.appendChild(zoomBadge);
+      card.appendChild(eyeBtn);
+      card.appendChild(delBtn);
+      list.appendChild(card);
+    }
+    if (state.lenses.length === 0) {
+      const msg = document.createElement("p");
+      msg.style.cssText = "font-size:11px;color:var(--muted);margin:4px 0";
+      msg.textContent = "Draw a lens on the canvas, or click Lens mode and drag.";
+      list.appendChild(msg);
+    }
+  }
+
+  function setupLensLab() {
+    const toggleBtn = document.getElementById("lensDrawToggle");
+    const zoomEl = document.getElementById("lensZoomDefault");
+    const zoomOut = document.getElementById("lensZoomDefaultOut");
+    if (!toggleBtn) return;
+
+    toggleBtn.addEventListener("click", () => {
+      setCanvasMode(state.canvasMode === "lens" ? "paint" : "lens");
+    });
+    if (zoomEl) {
+      zoomEl.addEventListener("input", () => {
+        _lensZoomDefault = Number(zoomEl.value);
+        if (zoomOut) zoomOut.textContent = `${_lensZoomDefault}×`;
+      });
+    }
+    lensesPanelSync();
+  }
+
+  // ── Sidebar (VSCode-style) ───────────────────────────────────────────────
+  function _setSidebarCollapsed(collapse) {
+    _sidebarCollapsed = collapse;
+    const workspace = document.getElementById("workspaceGrid");
+    const sidebarContent = document.getElementById("sidebarContent");
+    if (sidebarContent) sidebarContent.classList.toggle("sc-hidden", collapse);
+    if (workspace) {
+      workspace.classList.toggle("sidebar-collapsed", collapse);
+      if (!collapse) workspace.style.setProperty("--right-w", _rightW + "px");
+    }
+    resizeCanvas();
+  }
+
+  function initPaneResizers() {
+    const workspace = document.getElementById("workspaceGrid");
+    const sidebarContent = document.getElementById("sidebarContent");
+    const sidebarResizer = document.getElementById("sidebarResizer");
+
+    // Activity bar tab switching
+    document.querySelectorAll(".abar-btn[data-stab]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.stab;
+        const alreadyActive = btn.classList.contains("abar-active");
+        if (alreadyActive && !_sidebarCollapsed) {
+          _setSidebarCollapsed(true);
+          return;
+        }
+        document.querySelectorAll(".abar-btn").forEach(b => b.classList.toggle("abar-active", b === btn));
+        document.querySelectorAll(".stab-panel").forEach(p => { p.style.display = "none"; });
+        const panel = document.getElementById("stab" + tab.charAt(0).toUpperCase() + tab.slice(1));
+        if (panel) panel.style.display = "";
+        if (_sidebarCollapsed) _setSidebarCollapsed(false);
+      });
+    });
+
+    // Sidebar drag resize
+    if (sidebarResizer && workspace) {
+      let dragging = false;
+      sidebarResizer.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        sidebarResizer.setPointerCapture(e.pointerId);
+        sidebarResizer.classList.add("dragging");
+        e.preventDefault();
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const rect = workspace.getBoundingClientRect();
+        const newW = Math.max(200, Math.min(640, rect.right - e.clientX));
+        _rightW = newW;
+        workspace.style.setProperty("--right-w", newW + "px");
+        resizeCanvas();
+      });
+      document.addEventListener("pointerup", () => {
+        if (dragging) { dragging = false; sidebarResizer.classList.remove("dragging"); }
+      });
+    }
+
+    // Bottom panel drag resize
+    const bottomResizer = document.getElementById("bottomResizer");
+    const scriptPanel = document.getElementById("scriptPanel");
+    if (bottomResizer && scriptPanel) {
+      let dragging = false;
+      let startY = 0, startH = 0;
+      bottomResizer.addEventListener("pointerdown", (e) => {
+        if (scriptPanel.classList.contains("bp-collapsed")) return;
+        dragging = true;
+        startY = e.clientY;
+        startH = scriptPanel.getBoundingClientRect().height;
+        bottomResizer.setPointerCapture(e.pointerId);
+        bottomResizer.classList.add("dragging");
+        e.preventDefault();
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const newH = Math.max(80, Math.min(600, startH - (e.clientY - startY)));
+        scriptPanel.style.setProperty("--bottom-h", newH + "px");
+        scriptPanel.style.flex = `0 0 ${newH}px`;
+      });
+      document.addEventListener("pointerup", () => {
+        if (dragging) { dragging = false; bottomResizer.classList.remove("dragging"); }
+      });
+    }
+
+    // Script Kernel toggle
+    function _toggleScriptPanel() {
+      const panel = document.getElementById("scriptPanel");
+      const btn = document.getElementById("scriptDrawerToggle");
+      if (!panel) return;
+      const collapsed = panel.classList.toggle("bp-collapsed");
+      if (btn) btn.textContent = collapsed ? "▲" : "▼";
+    }
+    document.getElementById("scriptHandle")?.addEventListener("click", (e) => {
+      if (e.target.closest(".sc-btn")) return;
+      _toggleScriptPanel();
+    });
+    document.getElementById("scriptDrawerToggle")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _toggleScriptPanel();
+    });
+  }
+
+  // ── Script Kernel ────────────────────────────────────────────────────────
+  function _updateHooksBadge() {
+    const badge = document.getElementById("hooksActiveBadge");
+    if (!badge) return;
+    const total = Object.values(_kernel.hooks).reduce((s, h) => s + h.size, 0);
+    badge.textContent = `${total} hook${total !== 1 ? "s" : ""}`;
+    badge.style.display = total > 0 ? "" : "none";
+  }
+
+  function _saveScript() {
+    try {
+      const data = _scriptCells.map(c => ({ code: _cellCode(c) }));
+      localStorage.setItem(LS_SCRIPT, JSON.stringify(data));
+    } catch (_) {}
+  }
+
+  function _loadScript() {
+    try {
+      const raw = localStorage.getItem(LS_SCRIPT);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      for (const { code } of data) _addCell(code);
+    } catch (_) {}
+  }
+
+  function _cellCode(cell) {
+    return cell.editor ? cell.editor.getValue() : (cell.ta ? cell.ta.value : (cell.code || ""));
+  }
+
+  function _addCell(code = "") {
+    const id = ++_scriptIdSeq;
+    const cell = { id, code, _hookCleanups: [] };
+    _scriptCells.push(cell);
+
+    const container = document.getElementById("scriptCells");
+    if (!container) return cell;
+
+    const wrap = document.createElement("div");
+    wrap.className = "sc-cell";
+    wrap.dataset.cellId = id;
+
+    const bar = document.createElement("div");
+    bar.className = "sc-cell-bar";
+    const label = document.createElement("span");
+    label.className = "sc-cell-label";
+    label.textContent = `cell ${id}`;
+
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "sc-btn";
+    expandBtn.textContent = "↕";
+    expandBtn.title = "Expand/collapse";
+    expandBtn.addEventListener("click", () => {
+      wrap.classList.toggle("sc-expanded");
+      cell.editor?.refresh();
+    });
+
+    const runBtn = document.createElement("button");
+    runBtn.className = "sc-btn";
+    runBtn.textContent = "▶";
+    runBtn.title = "Run (Shift+Enter)";
+    runBtn.addEventListener("click", () => _runCell(id));
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "sc-btn sc-btn-danger";
+    delBtn.textContent = "✕";
+    delBtn.title = "Delete cell";
+    delBtn.addEventListener("click", () => _deleteCell(id));
+
+    bar.appendChild(label);
+    bar.appendChild(expandBtn);
+    bar.appendChild(runBtn);
+    bar.appendChild(delBtn);
+
+    const editorWrap = document.createElement("div");
+    editorWrap.className = "sc-editor-wrap";
+
+    if (typeof CodeMirror !== "undefined") {
+      const editor = CodeMirror(editorWrap, {
+        value: code,
+        mode: "javascript",
+        theme: "dracula",
+        lineNumbers: false,
+        matchBrackets: true,
+        lineWrapping: true,
+        indentUnit: 2,
+        tabSize: 2,
+        extraKeys: {
+          "Shift-Enter": () => _runCell(id),
+          "Tab": cm => cm.execCommand("indentMore"),
+          "Shift-Tab": cm => cm.execCommand("indentLess"),
+        },
+      });
+      cell.editor = editor;
+      editor.on("change", () => { cell.code = editor.getValue(); _saveScript(); });
+      setTimeout(() => editor.refresh(), 0);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = code;
+      ta.spellcheck = false;
+      ta.autocomplete = "off";
+      ta.placeholder = "// sdk, cells, rules, sim, canvas, globals, print\n// Shift+Enter to run";
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); _runCell(id); }
+      });
+      ta.addEventListener("input", () => { cell.code = ta.value; _saveScript(); });
+      cell.ta = ta;
+      editorWrap.appendChild(ta);
+    }
+
+    const output = document.createElement("div");
+    output.className = "sc-output";
+    output.style.display = "none";
+    cell._output = output;
+
+    wrap.appendChild(bar);
+    wrap.appendChild(editorWrap);
+    wrap.appendChild(output);
+    container.appendChild(wrap);
+    cell._elem = wrap;
+
+    if (cell.editor) cell.editor.focus();
+    else cell.ta?.focus();
+    return cell;
+  }
+
+  function _deleteCell(id) {
+    const idx = _scriptCells.findIndex(c => c.id === id);
+    if (idx === -1) return;
+    const cell = _scriptCells[idx];
+    cell._hookCleanups.forEach(fn => fn());
+    _scriptCells.splice(idx, 1);
+    cell._elem?.remove();
+    _updateHooksBadge();
+    _saveScript();
+  }
+
+  async function _runCell(id) {
+    const cell = _scriptCells.find(c => c.id === id);
+    if (!cell) return;
+    // Clean previous hooks
+    cell._hookCleanups.forEach(fn => fn());
+    cell._hookCleanups = [];
+
+    const code = _cellCode(cell);
+    const out = cell._output;
+    if (out) { out.style.display = "none"; out.textContent = ""; out.className = "sc-output"; }
+
+    const printFn = (...args) => {
+      if (!out) return;
+      out.style.display = "";
+      out.textContent += args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ") + "\n";
+    };
+
+    const sdkHook = (hookName, fn) => {
+      _kernel.hooks[hookName]?.add(fn);
+      cell._hookCleanups.push(() => _kernel.hooks[hookName]?.delete(fn));
+      _updateHooksBadge();
+    };
+
+    const sdkCells = {
+      get size() { return activeAlive().size; },
+      add(col, row) { setCell(col, row, true); },
+      remove(col, row) { setCell(col, row, false); },
+      fill(x, y, w, h, density = 1) {
+        for (let r = y; r < y + h; r++) for (let c = x; c < x + w; c++)
+          if (Math.random() < density) setCell(c, r, true);
+      },
+      clear() { clearBoard(); },
+      forEach(fn) { for (const k of activeAlive()) { const [c, r] = parseKey(k); fn(c, r); } },
+    };
+    const sdkRules = {
+      get birth() { return [...state.ruleB].sort((a, b) => a - b); },
+      get survival() { return [...state.ruleS].sort((a, b) => a - b); },
+      set(B, S) { state.ruleB = new Set(B); state.ruleS = new Set(S); state._ruleDirty = true; },
+      toString() { return ruleToString(state.ruleB, state.ruleS); },
+    };
+    const sdkSim = {
+      get generation() { return state.generation; },
+      step(n = 1) { for (let i = 0; i < n; i++) tickForward(); },
+      play() { if (!state.running) { state.running = true; document.getElementById("playBtn").textContent = "Pause"; } },
+      pause() { if (state.running) { state.running = false; document.getElementById("playBtn").textContent = "Play"; } },
+      get running() { return state.running; },
+    };
+    const sdkCanvas = { get ctx() { return ctx; }, get width() { return canvas.width / (window.devicePixelRatio || 1); }, get height() { return canvas.height / (window.devicePixelRatio || 1); } };
+
+    try {
+      const fn = new Function("cells", "rules", "sim", "canvas", "globals", "hook", "log", "print", `"use strict"; return (async () => { ${code} })()`);
+      await fn(sdkCells, sdkRules, sdkSim, sdkCanvas, _kernel.globals, sdkHook, printFn, printFn);
+      if (out && out.textContent === "") out.style.display = "none";
+    } catch (err) {
+      if (out) { out.style.display = ""; out.textContent = String(err); out.className = "sc-output sc-err"; }
+    }
+    _updateHooksBadge();
+  }
+
+  const SCRIPT_SAMPLES = {
+    log:       `log('gen:', sim.generation, '  pop:', cells.size);`,
+    fill:      `// seed a 40×40 region at 35% density\ncells.fill(-20, -20, 40, 40, 0.35);\nlog('seeded');`,
+    rules:     `// Day & Night\nrules.set([3,6,7,8], [3,4,6,7,8]);\nlog('rules:', rules.toString());`,
+    hookStep:  `// log population every 60 generations\nhook('afterStep', () => {\n  if (sim.generation % 60 === 0)\n    log('gen', sim.generation, 'pop', cells.size);\n});`,
+    hookPause: `// auto-pause when pop reaches 500\nhook('afterStep', () => {\n  if (cells.size >= 500) {\n    sim.pause();\n    log('paused at', cells.size, 'cells — gen', sim.generation);\n  }\n});`,
+    overlay:   `// tint the canvas each frame\nconst { ctx, width, height } = canvas;\nctx.save();\nctx.fillStyle = 'rgba(91,224,188,0.06)';\nctx.fillRect(0, 0, width, height);\nctx.restore();\nlog('overlay drawn');`,
+  };
+
+  function setupScriptKernel() {
+    document.getElementById("scriptAddCell")?.addEventListener("click", () => {
+      _addCell();
+      document.getElementById("scriptPanel")?.classList.remove("bp-collapsed");
+      const btn = document.getElementById("scriptDrawerToggle");
+      if (btn) btn.textContent = "▼";
+    });
+    document.getElementById("scriptRunAll")?.addEventListener("click", async () => {
+      for (const cell of _scriptCells) await _runCell(cell.id);
+    });
+    document.getElementById("scriptClearHooks")?.addEventListener("click", () => {
+      for (const cell of _scriptCells) { cell._hookCleanups.forEach(fn => fn()); cell._hookCleanups = []; }
+      for (const k of Object.keys(_kernel.hooks)) _kernel.hooks[k].clear();
+      _updateHooksBadge();
+    });
+    document.getElementById("scriptClearAll")?.addEventListener("click", () => {
+      [..._scriptCells].map(c => c.id).forEach(id => _deleteCell(id));
+    });
+
+    const sampleSel = document.getElementById("scriptSampleSelect");
+    sampleSel?.addEventListener("change", () => {
+      const code = SCRIPT_SAMPLES[sampleSel.value];
+      if (!code) return;
+      sampleSel.value = "";
+      _addCell(code);
+      document.getElementById("scriptPanel")?.classList.remove("bp-collapsed");
+      const btn = document.getElementById("scriptDrawerToggle");
+      if (btn) btn.textContent = "▼";
+    });
+
+    _loadScript();
+    if (_scriptCells.length === 0) {
+      _addCell("// Script Kernel — sdk: cells, rules, sim, canvas, globals, hook, log\n// Shift+Enter to run  ·  ↕ to expand\nlog('pop:', cells.size, '  gen:', sim.generation);");
+    }
   }
 
   function setupCaptureLab() {
@@ -5999,6 +6627,32 @@
     document.getElementById("nbScenesBtn")?.addEventListener("click", nbPlayScenes);
     document.getElementById("nbExportBtn")?.addEventListener("click", nbExport);
 
+    const autoToggle = document.getElementById("nbAutoToggle");
+    const autoClear  = document.getElementById("nbAutoClear");
+    function _syncAutoToggle() {
+      const dot = document.querySelector(".nb-auto-dot");
+      if (!autoToggle) return;
+      if (state.notebook.autoEnabled) {
+        autoToggle.textContent = "⏸ Pause";
+        dot?.classList.remove("nb-auto-dot-off");
+      } else {
+        autoToggle.textContent = "▶ Enable";
+        dot?.classList.add("nb-auto-dot-off");
+      }
+    }
+    autoToggle?.addEventListener("click", () => {
+      state.notebook.autoEnabled = !state.notebook.autoEnabled;
+      _syncAutoToggle();
+    });
+    autoClear?.addEventListener("click", () => {
+      state.notebook.entries = state.notebook.entries.filter(e => e.type !== "auto");
+      const feed = document.getElementById("nbAutoFeed");
+      if (feed) feed.innerHTML = '<div class="nb-feed-empty">Feed cleared.</div>';
+      nbSave();
+      if (state.notebook.open) nbRender();
+    });
+    _syncAutoToggle();
+
     // Escape closes pin mode
     window.addEventListener("keydown", ev => {
       if (ev.key === "Escape" && state.notebook.pinMode) {
@@ -6008,466 +6662,6 @@
         setOverlay("");
       }
     }, { capture: true });
-  }
-
-  // ─── ASF panel ────────────────────────────────────────────────────────────
-
-  function asfPanelSetVisible(show) {
-    const panel = document.getElementById("asfPanel");
-    const fPanel = document.getElementById("fractalPanel");
-    const body  = document.getElementById("inspectorBody");
-    if (!panel || !body) return;
-    panel.style.display  = show ? "" : "none";
-    if (fPanel) fPanel.style.display = "none";
-    body.style.display   = show ? "none" : "";
-  }
-
-  function fractalPanelSetVisible(show) {
-    const panel  = document.getElementById("fractalPanel");
-    const asfP   = document.getElementById("asfPanel");
-    const body   = document.getElementById("inspectorBody");
-    if (!panel) return;
-    panel.style.display  = show ? "" : "none";
-    if (asfP) asfP.style.display = "none";
-    if (body) body.style.display = show ? "none" : "";
-  }
-
-  function asfSyncPanel() {
-    if (!window.ASF) return;
-    const specId = ASF.getActiveSpecId();
-    const spec   = ASF.SPECS[specId];
-    if (!spec) return;
-    const nameEl = document.getElementById("asfModeName");
-    if (nameEl) nameEl.textContent = spec.name;
-    // Show/hide sections based on spec type
-    const lSec = document.getElementById("asfLeniaSection");
-    const gSec = document.getElementById("asfGsSection");
-    const isGS = specId === "gray-scott";
-    if (lSec) lSec.style.display = isGS ? "none" : "";
-    if (gSec) gSec.style.display = isGS ? ""     : "none";
-    // Sync slider values from pipeline
-    const syncSlider = (id, outId, key) => {
-      const el = document.getElementById(id);
-      const out = document.getElementById(outId);
-      const val = ASF.getParam(key);
-      if (el && val !== undefined) { el.value = val; if (out) out.textContent = Number(val).toFixed(4); }
-    };
-    syncSlider("asfMu",    "asfMuOut",    "mu");
-    syncSlider("asfSigma", "asfSigmaOut", "sigma");
-    syncSlider("asfDt",    "asfDtOut",    "dt");
-    syncSlider("asfF",     "asfFOut",     "F");
-    syncSlider("asfK",     "asfKOut",     "K");
-    const scaleEl = document.getElementById("asfSimScale");
-    if (scaleEl) scaleEl.value = String(ASF.getSimScale(specId));
-    // Show fractal field controls only for fractal-lenia
-    const fracSec = document.getElementById("asfFractalSection");
-    if (fracSec) fracSec.style.display = specId === "fractal-lenia" ? "" : "none";
-    if (specId === "fractal-lenia") {
-      const cr = ASF.getParam("fracCR") ?? -0.7269;
-      const ci = ASF.getParam("fracCI") ?? 0.1889;
-      const crEl = document.getElementById("asfFracCR"); const crOut = document.getElementById("asfFracCROut");
-      const ciEl = document.getElementById("asfFracCI"); const ciOut = document.getElementById("asfFracCIOut");
-      if (crEl) { crEl.value = cr.toFixed(4); if (crOut) crOut.textContent = cr.toFixed(4); }
-      if (ciEl) { ciEl.value = ci.toFixed(4); if (ciOut) ciOut.textContent = ci.toFixed(4); }
-    }
-    // Populate creature list
-    const list = document.getElementById("asfCreatureList");
-    if (list && ASF.CREATURES) {
-      list.innerHTML = "";
-      ASF.CREATURES.filter(c => c.specId === specId).forEach(c => {
-        const btn = document.createElement("button");
-        btn.className = "asf-creature-btn";
-        btn.textContent = c.name;
-        btn.title = c.desc;
-        btn.addEventListener("click", () => {
-          const [W, H] = ASF.getWorldSize();
-          ASF.spawnCreature(c.id, W/2, H/2);
-        });
-        list.appendChild(btn);
-      });
-    }
-    // Rebuild kernel cards
-    buildKernelCards();
-    // Sync GLSL editor visibility and content
-    const glslSec = document.getElementById("asfGlslSection");
-    const glslEditor = document.getElementById("asfGlslEditor");
-    const glsl = ASF.getGrowthGlsl();
-    if (glslSec) glslSec.style.display = glsl !== null ? "" : "none";
-    if (glslEditor && glsl !== null) glslEditor.value = glsl.trim();
-    // Clear compile status on spec change
-    const statusEl = document.getElementById("asfGlslStatus");
-    const errorEl  = document.getElementById("asfGlslError");
-    if (statusEl) { statusEl.textContent = ""; statusEl.className = "asf-glsl-status"; }
-    if (errorEl)  errorEl.textContent = "";
-  }
-
-  function buildKernelCards() {
-    const list = document.getElementById("asfKernelList");
-    if (!list || !window.ASF || !ASF.isReady()) return;
-    const n = ASF.getKernelCount();
-    list.innerHTML = "";
-    for (let i = 0; i < n; i++) {
-      const k = ASF.getKernelParams(i);
-      if (!k) continue;
-      const card = document.createElement("div");
-      card.className = "asf-kernel-card";
-
-      const typeTag = document.createElement("span");
-      typeTag.className = "asf-kernel-type";
-      typeTag.textContent = `K${i}: ${k.type}`;
-      card.appendChild(typeTag);
-
-      card.appendChild(makeKernelSVG(k));
-
-      card.appendChild(makeKernelSliderRow("Radius", k.radius, 5, 50, 1, (v) => {
-        ASF.setKernelParam(i, "radius", v | 0);
-        refreshKernelCard(card, i);
-      }));
-      if (k.type === "ring") {
-        card.appendChild(makeKernelSliderRow("Inner", k.innerFrac, 0, 0.9, 0.05, (v) => {
-          ASF.setKernelParam(i, "innerFrac", v);
-          refreshKernelCard(card, i);
-        }));
-        card.appendChild(makeKernelSliderRow("Alpha", k.alpha, 1, 8, 0.25, (v) => {
-          ASF.setKernelParam(i, "alpha", v);
-          refreshKernelCard(card, i);
-        }));
-      }
-      list.appendChild(card);
-    }
-  }
-
-  function refreshKernelCard(card, idx) {
-    const k = ASF.getKernelParams(idx);
-    if (!k) return;
-    const old = card.querySelector(".asf-kernel-svg");
-    if (old) card.replaceChild(makeKernelSVG(k), old);
-  }
-
-  function makeKernelSVG(k) {
-    const W = 120, H = 36, pad = 2;
-    const pts = [];
-    for (let i = 0; i <= 80; i++) {
-      const r = i / 80;
-      let w = 0;
-      if (k.type === "disk") {
-        w = r <= 1.0 ? 1.0 : 0.0;
-      } else if (k.type === "ring") {
-        const inner = k.innerFrac || 0;
-        if (r > inner && r < 1.0) {
-          const u = (r - inner) / (1.0 - inner + 1e-9);
-          w = Math.exp((k.alpha || 4) * (1.0 - 1.0 / (4 * u * (1 - u) + 1e-6)));
-        }
-      }
-      pts.push(`${(r * (W - pad * 2) + pad).toFixed(1)},${(H - pad - w * (H - pad * 3)).toFixed(1)}`);
-    }
-    const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    svg.setAttribute("width", W);
-    svg.setAttribute("height", H);
-    svg.classList.add("asf-kernel-svg");
-    const pl = document.createElementNS(ns, "polyline");
-    pl.setAttribute("points", pts.join(" "));
-    pl.setAttribute("fill", "none");
-    pl.setAttribute("stroke", "#5be0bc");
-    pl.setAttribute("stroke-width", "1.5");
-    pl.setAttribute("stroke-linejoin", "round");
-    svg.appendChild(pl);
-    return svg;
-  }
-
-  function makeKernelSliderRow(label, val, min, max, step, onChange) {
-    const row = document.createElement("label");
-    row.className = "asf-row";
-    const sp = document.createElement("span");
-    sp.textContent = label;
-    row.appendChild(sp);
-    const input = document.createElement("input");
-    input.type = "range"; input.min = min; input.max = max;
-    input.step = step; input.value = val;
-    input.className = "asf-slider";
-    const out = document.createElement("span");
-    out.className = "asf-val";
-    out.textContent = Number(val).toFixed(2);
-    input.addEventListener("input", () => {
-      const v = Number(input.value);
-      out.textContent = v.toFixed(2);
-      onChange(v);
-    });
-    row.appendChild(input);
-    row.appendChild(out);
-    return row;
-  }
-
-  function setupFractal() {
-    if (!window.FractalEngine) return;
-
-    const fe = FractalEngine;
-
-    // Helper: slider with live output label
-    const fSlider = (id, outId, fmt, onChange) => {
-      const el  = document.getElementById(id);
-      const out = document.getElementById(outId);
-      if (!el) return;
-      el.addEventListener("input", () => {
-        const v = Number(el.value);
-        if (out) out.textContent = fmt(v);
-        onChange(v);
-      });
-    };
-
-    // ── Type toggle ──────────────────────────────────────────────────────────
-    document.getElementById("fracMandelbrot")?.addEventListener("click", () => {
-      fe.setType(0);
-      fe.reset();
-      document.getElementById("fracMandelbrot").classList.add("asf-btn-active");
-      document.getElementById("fracJuliaBtn")?.classList.remove("asf-btn-active");
-    });
-    document.getElementById("fracJuliaBtn")?.addEventListener("click", () => {
-      fe.setType(1);
-      document.getElementById("fracJuliaBtn").classList.add("asf-btn-active");
-      document.getElementById("fracMandelbrot")?.classList.remove("asf-btn-active");
-    });
-
-    // ── Julia C sliders ──────────────────────────────────────────────────────
-    fSlider("fracJCR", "fracJCROut", (v) => v.toFixed(4), (v) => {
-      const jc = fe.getJuliaC(); fe.setJuliaC(v, jc.i);
-    });
-    fSlider("fracJCI", "fracJCIOut", (v) => v.toFixed(4), (v) => {
-      const jc = fe.getJuliaC(); fe.setJuliaC(jc.r, v);
-    });
-
-    // ── Julia presets ────────────────────────────────────────────────────────
-    document.querySelectorAll(".frac-preset").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const r = parseFloat(btn.dataset.r), i = parseFloat(btn.dataset.i);
-        fe.setJuliaC(r, i); fe.setType(1); fe.reset();
-        document.getElementById("fracJuliaBtn")?.classList.add("asf-btn-active");
-        document.getElementById("fracMandelbrot")?.classList.remove("asf-btn-active");
-      });
-    });
-
-    // ── Animation ────────────────────────────────────────────────────────────
-    document.getElementById("fracAnimate")?.addEventListener("change", (e) => {
-      fe.setAnimate(e.target.checked);
-      if (e.target.checked) fe.setType(1); // animation only applies to Julia
-    });
-    fSlider("fracAnimSpeed",  "fracAnimSpeedOut",  (v) => v.toFixed(2), (v) => fe.setAnimSpeed(v));
-    fSlider("fracAnimRadius", "fracAnimRadiusOut", (v) => v.toFixed(3), (v) => {
-      const ao = fe.getAnimOrbit(); fe.setAnimOrbit(ao.cr, ao.ci, v);
-    });
-
-    // ── Rendering ────────────────────────────────────────────────────────────
-    fSlider("fracMaxIter", "fracMaxIterOut", (v) => String(v | 0), (v) => fe.setMaxIter(v | 0));
-    document.getElementById("fracScheme")?.addEventListener("change", (e) => fe.setScheme(parseInt(e.target.value)));
-    document.getElementById("fracDrawMode")?.addEventListener("change", (e) => fe.setDrawMode(parseInt(e.target.value)));
-    document.getElementById("fracReset")?.addEventListener("click", () => fe.reset());
-
-    // ── Fractal-Lenia: fractal field controls inside asfPanel ─────────────────
-    const flSlider = (id, outId, paramKey) => {
-      const el  = document.getElementById(id);
-      const out = document.getElementById(outId);
-      if (!el) return;
-      el.addEventListener("input", () => {
-        const v = Number(el.value);
-        if (out) out.textContent = v.toFixed(4);
-        if (window.ASF && ASF.isReady()) ASF.setFractalC(
-          paramKey === "cr" ? v : (ASF.getParam("fracCR") ?? -0.7269),
-          paramKey === "ci" ? v : (ASF.getParam("fracCI") ?? 0.1889)
-        );
-        // Keep FractalEngine in sync (for animation cross-link)
-        const jc = fe.getJuliaC();
-        fe.setJuliaC(
-          paramKey === "cr" ? v : jc.r,
-          paramKey === "ci" ? v : jc.i
-        );
-      });
-    };
-    flSlider("asfFracCR", "asfFracCROut", "cr");
-    flSlider("asfFracCI", "asfFracCIOut", "ci");
-
-    document.getElementById("asfFracAnimate")?.addEventListener("change", (e) => {
-      fe.setAnimate(e.target.checked);
-    });
-
-    document.querySelectorAll(".asf-frac-preset").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const r = parseFloat(btn.dataset.r), i = parseFloat(btn.dataset.i);
-        if (window.ASF && ASF.isReady()) ASF.setFractalC(r, i);
-        fe.setJuliaC(r, i);
-        const crEl = document.getElementById("asfFracCR"); const crOut = document.getElementById("asfFracCROut");
-        const ciEl = document.getElementById("asfFracCI"); const ciOut = document.getElementById("asfFracCIOut");
-        if (crEl) { crEl.value = r.toFixed(4); if (crOut) crOut.textContent = r.toFixed(4); }
-        if (ciEl) { ciEl.value = i.toFixed(4); if (ciOut) ciOut.textContent = i.toFixed(4); }
-      });
-    });
-  }
-
-  function setupASF() {
-    if (!window.ASF) return;
-
-    const slider = (id, outId, key, format) => {
-      const el  = document.getElementById(id);
-      const out = document.getElementById(outId);
-      if (!el) return;
-      el.addEventListener("input", () => {
-        const v = Number(el.value);
-        if (out) out.textContent = (format || (x => x.toFixed(4)))(v);
-        ASF.setParam(key, v);
-      });
-    };
-
-    slider("asfMu",    "asfMuOut",    "mu");
-    slider("asfSigma", "asfSigmaOut", "sigma");
-    slider("asfDt",    "asfDtOut",    "dt");
-    slider("asfF",     "asfFOut",     "F");
-    slider("asfK",     "asfKOut",     "K");
-
-    const densEl = document.getElementById("asfDensity");
-    const densOut = document.getElementById("asfDensityOut");
-    if (densEl) {
-      densEl.addEventListener("input", () => {
-        if (densOut) densOut.textContent = Number(densEl.value).toFixed(2);
-      });
-    }
-
-    document.getElementById("asfSimScale")?.addEventListener("change", (e) => {
-      const n = parseInt(e.target.value, 10);
-      ASF.setSimScale(n);
-      const [gW, gH] = ASF.getWorldSize();
-      const scale = ASF.getSimScale();
-      state.cameraX = gW / 2;
-      state.cameraY = gH / 2;
-      state.zoom = scale;
-    });
-
-    document.getElementById("asfRandomizeBtn")?.addEventListener("click", () => {
-      const density = densEl ? Number(densEl.value) : 0.15;
-      ASF.randomize(density);
-    });
-
-    document.getElementById("asfClearBtn")?.addEventListener("click", () => {
-      if (!window.ASF || !ASF.isReady()) return;
-      ASF.clear();
-    });
-
-    document.getElementById("asfColormap")?.addEventListener("change", (e) => {
-      ASF.recompileDisplay(e.target.value);
-    });
-
-    // Gray-Scott presets
-    document.querySelectorAll(".asf-gs-preset").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const F = parseFloat(btn.dataset.f);
-        const K = parseFloat(btn.dataset.k);
-        ASF.setParam("F", F);
-        ASF.setParam("K", K);
-        const fEl = document.getElementById("asfF");
-        const kEl = document.getElementById("asfK");
-        if (fEl) { fEl.value = F; document.getElementById("asfFOut").textContent = F.toFixed(4); }
-        if (kEl) { kEl.value = K; document.getElementById("asfKOut").textContent = K.toFixed(4); }
-        // Re-seed for new params
-        ASF.activate(ASF.getActiveSpecId(), null, canvas.width, canvas.height);
-        asfSyncPanel();
-      });
-    });
-
-    // Edge/structural highlight slider
-    const edgeEl  = document.getElementById("asfEdgeStr");
-    const edgeOut = document.getElementById("asfEdgeStrOut");
-    if (edgeEl) {
-      edgeEl.addEventListener("input", () => {
-        const v = Number(edgeEl.value);
-        if (edgeOut) edgeOut.textContent = v.toFixed(1);
-        ASF.setParam("edgeStr", v);
-      });
-    }
-
-    // Adaptive density controls
-    if (!state.gpuAdaptive) {
-      state.gpuAdaptive = { enabled: false, target: 0.15, strength: 0.008 };
-    }
-    const adaptCheck  = document.getElementById("asfAdaptiveEnabled");
-    const adaptTarget = document.getElementById("asfAdaptiveTarget");
-    const adaptStr    = document.getElementById("asfAdaptiveStr");
-    const adaptTOut   = document.getElementById("asfAdaptiveTargetOut");
-    const adaptSOut   = document.getElementById("asfAdaptiveStrOut");
-    if (adaptCheck) {
-      adaptCheck.checked = state.gpuAdaptive.enabled;
-      adaptCheck.addEventListener("change", () => {
-        state.gpuAdaptive.enabled = adaptCheck.checked;
-      });
-    }
-    if (adaptTarget) {
-      adaptTarget.value = state.gpuAdaptive.target;
-      adaptTarget.addEventListener("input", () => {
-        state.gpuAdaptive.target = Number(adaptTarget.value);
-        if (adaptTOut) adaptTOut.textContent = Number(adaptTarget.value).toFixed(2);
-      });
-    }
-    if (adaptStr) {
-      adaptStr.value = state.gpuAdaptive.strength;
-      adaptStr.addEventListener("input", () => {
-        state.gpuAdaptive.strength = Number(adaptStr.value);
-        if (adaptSOut) adaptSOut.textContent = Number(adaptStr.value).toFixed(4);
-      });
-    }
-
-    // GLSL growth editor
-    const glslCompileBtn = document.getElementById("asfGlslCompileBtn");
-    const glslStatusEl   = document.getElementById("asfGlslStatus");
-    const glslErrorEl    = document.getElementById("asfGlslError");
-    const glslEditorEl   = document.getElementById("asfGlslEditor");
-    if (glslCompileBtn && glslEditorEl) {
-      glslCompileBtn.addEventListener("click", () => {
-        if (!window.ASF || !ASF.isReady()) return;
-        const result = ASF.recompileGrowth(glslEditorEl.value);
-        if (result.ok) {
-          glslStatusEl.textContent = "OK";
-          glslStatusEl.className = "asf-glsl-status asf-glsl-ok";
-          if (glslErrorEl) glslErrorEl.textContent = "";
-        } else {
-          glslStatusEl.textContent = "Error";
-          glslStatusEl.className = "asf-glsl-status asf-glsl-err";
-          if (glslErrorEl) glslErrorEl.textContent = result.error.slice(0, 500);
-        }
-      });
-    }
-  }
-
-  function initPaneResizers() {
-    const workspace = document.querySelector('.workspace');
-    if (!workspace) return;
-    let paletteW = 290, inspectorW = 290;
-
-    function attachResizer(handleId, isLeft) {
-      const handle = document.getElementById(handleId);
-      if (!handle) return;
-      handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        const startX = e.clientX;
-        const startW = isLeft ? paletteW : inspectorW;
-        handle.classList.add('rh-dragging');
-        const onMove = (ev) => {
-          const dx = ev.clientX - startX;
-          const newW = Math.max(160, Math.min(640, startW + (isLeft ? dx : -dx)));
-          if (isLeft) { paletteW = newW; workspace.style.setProperty('--palette-w', newW + 'px'); }
-          else        { inspectorW = newW; workspace.style.setProperty('--inspector-w', newW + 'px'); }
-          resizeCanvas();
-        };
-        const onUp = () => {
-          handle.classList.remove('rh-dragging');
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
-    }
-
-    attachResizer('paletteResizer', true);
-    attachResizer('inspectorResizer', false);
   }
 
   function init() {
@@ -6482,18 +6676,18 @@
     setupEvoLab();
     setupZoneLab();
     setupFieldLab();
+    setupLensLab();
     setupLibrary();
     setupCaptureLab();
     setupAnalysisLab();
     setupNotebook();
-    setupASF();
-    setupFractal();
     buildPalette();
     const paletteSearchEl = document.getElementById("paletteSearch");
     if (paletteSearchEl) {
       paletteSearchEl.addEventListener("input", () => buildPalette(paletteSearchEl.value));
     }
     initPaneResizers();
+    setupScriptKernel();
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
