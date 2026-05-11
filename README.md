@@ -1,26 +1,25 @@
 <div align="center">
 
-# 🎮 Automata Arcade
+# Automata Arcade
 
-### Conway's Game of Life — reimagined as an engineering playground, circuit lab, and research instrument.
+### A browser-based cellular automaton laboratory — from beginner sandbox to scriptable research instrument.
 
 ![Automata Arcade](docs/media/hero.gif)
 
 [![Live Demo](https://img.shields.io/badge/Live_Demo-Online-5be0bc?style=flat-square)](https://automata-arcade.vercel.app)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js)](https://nodejs.org)
 [![Vanilla JS](https://img.shields.io/badge/Built_with-Vanilla_JS-f2b84b?style=flat-square)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
 [![Three.js](https://img.shields.io/badge/3D-Three.js_r158-black?style=flat-square)](https://threejs.org)
-[![Zero dependencies](https://img.shields.io/badge/Runtime_deps-Zero-accent?style=flat-square)](#)
+[![Zero runtime deps](https://img.shields.io/badge/Runtime_deps-Zero-5be0bc?style=flat-square)](#)
 
 </div>
 
 ---
 
-## What is this?
+## What is it?
 
-Automata Arcade is a browser-based Game of Life environment that grows with you — from first-time explorer to circuit designer. Start by dragging gliders onto the board and watching them fly. Progress to solving structured arcade missions. Eventually you'll be building NOT gates, routing signal streams across a torus, and rewinding time to replay a particularly beautiful collision.
+Automata Arcade runs Conway's Game of Life — and much more — entirely in your browser. Start by painting cells and watching them evolve. Layer in force fields, zones with custom rules, and Lenia continuous automata. Write live JavaScript that hooks into the simulation pipeline. Study collisions in slow motion on the time machine. Run the same rules on a sphere, torus, Klein bottle, or Möbius strip. Build NOT gates. Publish your discoveries to the Journal.
 
-It runs entirely in your browser. No install required for the demo. All pattern data is computed locally with no network calls after the first page load.
+No install required. No server. All computation is local.
 
 ---
 
@@ -38,36 +37,57 @@ Or hit the [Live Demo](https://automata-arcade.vercel.app) directly.
 
 ---
 
-## Feature Overview
+## Feature Map
 
-| Layer | What it gives you |
+| Area | What you get |
 |---|---|
-| 🎨 **Sandbox** | Infinite flat grid — draw, drop prefabs, experiment |
-| 🏆 **Arcade** | 9 structured missions with scoring, zones, and win states |
-| 🎓 **Circuit Academy** | 7 guided tutorial levels that teach GoL signal logic |
-| 🌐 **3D Manifolds** | Live GoL on a sphere, torus, Klein bottle, Möbius strip, cylinder |
-| ⏱️ **Time Machine** | Full history playhead — scrub, rewind, replay any moment |
-| 📓 **Notebook** | Live research journal — auto-detection, snapshots, pins, timeline markers, cinematic scenes |
-| 📦 **Prefab Palette** | 30+ drag-and-drop patterns across Required, Custom, and Circuit categories |
+| 🎨 **Canvas & Modes** | Paint, erase, pan, select (rotate/flip/move), stamp prefabs with live ghost preview, force-paint, zone-draw, lens-draw, object mode |
+| ⚙️ **Rule Engine** | B/S notation editor, 20+ named presets, per-zone rule overrides, dual-rule swap, Lenia continuous automata |
+| 🧲 **Force Fields** | Attractor and repeller fields that steer the alive-cell set each step |
+| 🗺️ **Zones** | Rectangular grid regions with independent B/S rules; used by Arcade for objectives and available in Sandbox for experiments |
+| 🔬 **Lenses** | Circular magnification overlays that live on the canvas — zoom in on any region without zooming the whole board |
+| ⏱️ **Time Machine** | 600-frame history buffer — scrub, rewind, step frame-by-frame, fork from any point |
+| 📦 **Prefab Palette** | 30+ patterns across Required, Custom, and Circuit categories; stamp mode with live ghost, rotation (R), flip (F) |
+| ✂️ **Selection** | Draw a region, translate, rotate 90° (R), flip (F), copy/cut/paste, capture to custom prefab |
+| 🌐 **3D Manifolds** | Live GoL on Sphere, Torus, Klein Bottle, Möbius Strip, Cylinder via Three.js WebGL |
+| 🏆 **Arcade** | 5 scored missions with zones, win states, and score multipliers |
+| 🎓 **Circuit Academy** | 7 guided levels teaching GoL signal logic — gliders, eaters, NOT/OR/AND gates, signal crossing |
+| 📓 **Journal** | Live research journal — auto-detects patterns, records snapshots, pins, timeline markers, cinematic scenes |
+| 💻 **Script Kernel** | Bottom-panel JS code editor with a live simulation SDK — hook into `afterStep`, `beforeDraw`, `afterDraw` pipelines |
+| 📊 **Analysis Lab** | Period detector, pattern classifier, population tracking |
+| 🧬 **Evo Lab** | Automatic rule mutation toward target population densities |
+| 📐 **Physics Lab** | Kernel shape (Moore / Von Neumann / Extended) and radius controls |
 
 ---
 
-## 🎨 The Board
+## The Board
 
-The main canvas is a pan-and-zoom 2D grid running Conway's B3/S23 rules.
+### Canvas Modes
 
-**Mouse controls:**
+Switch modes from the toolbar or keyboard:
+
+| Key | Mode | What it does |
+|---|---|---|
+| `P` | **Paint** | Left-click/drag to draw · right-click/drag to erase |
+| `M` | **Move** | Drag to pan the camera |
+| `S` | **Select** | Draw a rectangle · then drag to translate, `R` to rotate 90°, `F` to flip · `Del` to delete · `Ctrl+C/X/V` to copy/cut/paste |
+| `V` | **Force** | Paint attract/repel force fields |
+| — | **Zone** | Draw rectangular rule-override zones |
+| — | **Lens** | Draw circular magnification overlays |
+| — | **Object** | Click to select and manipulate zones, fields, or lenses |
+| — | **Prefab Stamp** | Entered by clicking a palette card · `R` rotate · `F` flip · click to place (multi-stamp) · `Esc` to exit |
+
+### Mouse Controls
 
 | Action | Result |
 |---|---|
-| Left-click / drag | Paint or act in current mode |
-| Right-click / drag | Erase cells (paint mode) |
+| Left-click / drag | Draw or act in current mode |
+| Right-click / drag | Erase (paint mode) |
 | Scroll wheel | Zoom in / out |
-| Drag in Move mode (`M`) | Pan the view |
-| Drag palette card → board | Place a prefab |
+| Drag in Move mode | Pan the view |
 | Right-drag on sphere | Rotate the 3D view |
 
-**Keyboard controls:**
+### Keyboard Shortcuts
 
 | Key | Action |
 |---|---|
@@ -76,299 +96,309 @@ The main canvas is a pan-and-zoom 2D grid running Conway's B3/S23 rules.
 | `B` | Step one generation backward |
 | `C` | Clear board |
 | `D` | Load demo scene |
-| `R` | Cycle rotation (0° → 90° → 180° → 270°) |
-| `F` | Flip prefab on X axis |
 | `G` | Toggle grid overlay |
-| `P` | Switch to **Paint** mode |
-| `M` | Toggle **Move/Pan** mode |
-| `S` | Toggle **Select** mode |
-| `V` | Toggle **Force** mode |
-| `Esc` | Return to Paint mode, clear selection |
+| `R` | Rotate 90° — stamp mode or selection |
+| `F` | Flip horizontally — stamp mode or selection |
+| `Esc` | Return to Paint mode / cancel stamp / deselect |
 | `1` | Sandbox mode |
 | `2` | Arcade mode |
-| `3` | Sphere |
-| `4` | Torus |
-| `5` | Klein Bottle |
-| `6` | Möbius Strip |
-| `7` | Cylinder |
+| `3–7` | 3D manifold modes (Sphere, Torus, Klein, Möbius, Cylinder) |
+
+---
+
+## Rule Engine
+
+The rule editor lives in the right-sidebar **Inspector** panel (Physics / Rule tabs).
+
+**B/S notation** — Born and Survive neighbour counts. The default `B3/S23` means: a dead cell with exactly 3 alive neighbours is born; an alive cell with 2 or 3 alive neighbours survives.
+
+**Named presets** — 20+ rules including HighLife, Seeds, Day & Night, Replicator, Diamoeba, 2×2, Move, Coagulations, and more.
+
+**Per-zone rules** — Each zone can carry its own B/S override. Cells in that zone step with local rules while the rest of the board uses the global rule.
+
+**Lenia mode** — Switch the engine to continuous Lenia: a smooth, kernel-based automaton that produces organic-looking creatures. Controlled by growth function parameters (µ, σ) and kernel radius. Visualised with a perceptual colour ramp (black → violet → teal → amber → white).
+
+**Kernel shape & radius** — Moore (8-cell), Von Neumann (4-cell), or Extended neighbourhood. Radius 1–5. Affects neighbour counting for standard B/S rules.
+
+**Evo Lab** — Mutates B/S rules automatically over time, nudging them toward a target population density. Watch rules evolve live.
+
+---
+
+## Force Fields
+
+Draw attract or repel fields from the **Force** toolbar button (or `V`). Fields exert a probabilistic bias on cell births near their boundary each step — attractors pull life inward, repellers push it out.
+
+Each field shows:
+- Drag the centre to reposition
+- Drag the edge to resize
+- Toggle visibility or delete via the Fields panel in the sidebar
+
+---
+
+## Zones
+
+Zones are rectangular overlays that override the global B/S rule within their boundary. Create them from the **Zone** toolbar button or the Zones panel.
+
+In **Arcade** mode, coloured zones are objective targets — amber receptors, orange switches, blue core blocks, and red danger zones.
+
+In **Sandbox** mode, zones let you set up reaction boundaries, rule-gradient experiments, or protected regions.
+
+---
+
+## Lenses
+
+Draw circular magnification overlays from the **Lens** toolbar button. Each lens renders an enlarged view of the cells beneath it without zooming the whole canvas. Drag to reposition, drag the edge to resize. Multiple lenses stack.
 
 ---
 
 ## ⏱️ Time Machine
 
-Every generation you run is recorded — up to **600 frames** of full board state. The timeline bar lives at the bottom of the board.
+Every generation is recorded — up to **600 frames** of full board state.
 
 ```
-  ⏮   ⏴   ⏪   ▶   ⏵   ⏭        gen 0 ════════●════════ gen 342        8×
-  │    │    │    │    │    │                      │
+  ⏮   ⏴   ⏪   ▶   ⏵   ⏭        gen 0 ════════●════════ gen 342
+  │    │    │    │    │    │
   │    │    │    │    │    └─ jump to newest frame
-  │    │    │    │    └─ step one generation forward (N)
-  │    │    │    └─ play / pause forward  (Space)
+  │    │    │    │    └─ step forward (N)
+  │    │    │    └─ play / pause (Space)
   │    │    └─ play backward through history
-  │    └─ step one generation backward   (B)
+  │    └─ step backward (B)
   └─ jump to oldest recorded frame
 ```
 
-**How it works:**
-
-- **Forward play** computes new generations and appends them to history.
-- **Backward play** replays stored frames — reverse evolution without re-computation.
-- **Scrubbing** — click or drag anywhere on the track to jump to any generation instantly.
-- **Forking** — if you scrub back to gen 100 and press Play, history after gen 100 is discarded and a fresh branch grows from that state.
-- **Speed tiers** — 1×, 2×, 4×, 8×, 15×, 25×, 30× steps per second, controlled by the slider at the right of the bar. The top-bar speed slider is a fine-grained override.
-
-> **Tip:** Pause the simulation, scrub backward until you see an interesting collision, then step forward frame-by-frame with `N` to watch it in slow motion.
+- **Scrubbing** — click or drag the track to jump to any generation instantly
+- **Forking** — scrub back and press Play; history after that point is discarded and a new branch grows
+- **Speed** — 1×, 2×, 4×, 8×, 15×, 25×, 30× steps/second via the speed slider
 
 ---
 
 ## 📦 Prefab Palette
 
-Drag any card from the left panel onto the board. Use the **Rotate** selector (or `R`) and **Flip X** (`F`) to orient it before dropping. The right-hand **Inspector** shows the selected prefab's description, dimensions, nominal period, and a usage tip.
+Click any card to enter **stamp mode** — a live teal ghost follows your cursor. **Drag** a card directly onto the canvas to place immediately.
 
-### 🔵 Required Patterns
+| Key | Action (stamp mode) |
+|---|---|
+| `R` | Rotate ghost 90° clockwise |
+| `F` | Flip ghost horizontally |
+| Click on canvas | Stamp the pattern (stays in stamp mode for multi-placing) |
+| `Esc` | Exit stamp mode |
 
-Fundamental building blocks — every GoL practitioner should know these.
+A hint bar above the timeline shows the current transform and available keys while you're stamping.
 
-| Pattern | Type | Description |
-|---|---|---|
-| **Glider** | Ship | The classic 5-cell diagonal courier. Travels c/4 south-east, period 4. |
-| **Lightweight Spaceship** | Ship | Faster horizontal craft. Useful across wide corridors. |
-| **Gosper Glider Gun** | Gun | First known infinite-growth pattern. Fires one SE glider every 30 generations. |
-| **Eater-1** | Still life | Absorbs incoming gliders and survives intact. The canonical terminator. |
-| **Pulse Seed** | Seed | Small high-energy seed that blooms into a periodic flicker. |
-| **Clock Seed** | Seed | Compact seed that typically settles into stable oscillators. |
+### Pattern Categories
 
-### 🟠 Custom Patterns
+**Required** — Universal building blocks: Glider, LWSS, Gosper Glider Gun, Eater-1, Pulse Seed, Clock Seed.
 
-Hand-crafted mechanisms for interesting dynamics.
+**Custom** — Hand-crafted dynamics: Beacon, Toad, Blinker Train, Spark Crab, Drift Fork, Pinwheel Seed, Mini Lab Core.
 
-| Pattern | Type | Description |
-|---|---|---|
-| **Beacon** | Oscillator | Classic period-2 oscillator. Used as the objective anchor in L2. |
-| **Toad** | Oscillator | Period-2 with a broad alternating swing. |
-| **Blinker Train** | Seed | Three staged blinkers that phase into a moving wavefront. |
-| **Spark Crab** | Seed | Asymmetric seed that ejects fast diagonal sparks. |
-| **Drift Fork** | Machine | Forked structure that nudges gliders into diverging traces. |
-| **Pinwheel Seed** | Seed | Cross-kernel seed with rotational blossom behavior. |
-| **Mini Lab Core** | Machine | Stable 4-sided core used as a defensive anchor in arcade missions. |
+**Circuit** — Verified signal-logic components:
+- *Still lives*: Block, Beehive, Tub, Loaf
+- *Oscillators*: Blinker (p2), Pulsar (p3), Pentadecathlon (p15)
+- *Seeds*: R-Pentomino, Acorn, Die Hard
+- *Gates*: Herschel, Signal Train, Annihilator (NOT), Turn Gate, Gosper Gun (NW)
 
-### 🟢 Circuit Patterns
-
-Verified signal-logic components — all behavior confirmed by simulation before encoding.
-
-#### Still Lives (stable anchors)
-
-| Pattern | Cells | Description |
-|---|---|---|
-| **Block** | 4 | 2×2 stable. Universal anchor — appears in nearly every circuit. |
-| **Beehive** | 6 | Common stable product of glider collisions. |
-| **Tub** | 4 | Compact diamond spacer. Won't disturb distant gliders. |
-| **Loaf** | 7 | Asymmetric 7-cell still life. Appears as gate residue. |
-
-#### Oscillators (clocks and timing)
-
-| Pattern | Cells | Period | Description |
-|---|---|---|---|
-| **Blinker** | 3 | 2 | Simplest oscillator. Gate or deflect at the right phase. |
-| **Pulsar** | 48 | 3 | Largest common natural oscillator. Visual timing reference. |
-| **Pentadecathlon** | 18 | 15 | Longest-period common small oscillator. Combines with the p30 Gosper gun for synchronised logic (LCM = 30). |
-
-#### Seeds (long-lived generators)
-
-| Pattern | Cells | Lifespan | Output |
-|---|---|---|---|
-| **R-Pentomino** | 5 | 1,103 gen | 6 escaping gliders |
-| **Acorn** | 7 | 5,206 gen | 13 gliders + 4 LWSSes |
-| **Die Hard** | 7 | 130 gen | Vanishes completely — clean timed event |
-
-#### Gates & Signal Logic
-
-| Pattern | Type | Description |
-|---|---|---|
-| **Herschel** | Carrier | 7-cell primitive of Herschel conduits. Emits a glider then stabilises. |
-| **Signal Train** | Machine | Three SE gliders at p30 spacing — one period of a Gosper stream. |
-| **Annihilator** | Gate | SE + NW gliders on collision course. Both vanish — zero residue. The NOT gate primitive. |
-| **Turn Gate** | Gate | SE + SW collision produces a single NE output — signal redirection. |
-| **Gosper Gun (NW)** | Gun | Gosper gun rotated 180°. Fires NW gliders, period 30. Aim at an SE stream for cancellation. |
+The right-sidebar **Inspector** shows each pattern's dimensions, period, and usage tip.
 
 ---
 
-## 🏆 Arcade Missions
+## ✂️ Selection
 
-Switch to **Arcade** mode, select a level, and press **Start Level**. The board is pre-loaded with the mission layout. Coloured zones appear on the grid — amber receptors, orange switches, blue core blocks, and red danger zones.
+Press `S` to enter select mode. Draw a rectangle around any region, then:
 
-Earn score multipliers by triggering zone events in quick succession.
+| Action | Result |
+|---|---|
+| Drag inside selection | Translate (move) cells |
+| `R` | Rotate 90° CW within the bounding box |
+| `F` | Flip horizontally within the bounding box |
+| `Ctrl+C` / `Ctrl+X` | Copy / cut |
+| `Ctrl+V` | Paste at cursor |
+| `Del` / `Backspace` | Delete selected cells |
+| Click outside | Commit and start a new selection |
+| `Esc` | Exit select mode |
 
-### Standard Levels
+Transforms (R/F) work on the current bounding box — rotating a 3×1 line gives a 1×3 column, regardless of cell density.
 
-| # | Name | Objective | Key mechanic |
-|---|---|---|---|
-| L1 | **Courier Duty** | Hit receptor within 180 gens | Route a glider to an amber zone |
-| L2 | **Beacon Watch** | Keep beacon alive 120/160 gens | Protect an oscillating cluster |
-| L3 | **Twin Switch Boot** | Trigger both switches ≤ 220 gens | Split a signal to two zones |
-| L4 | **Population Tempo** | Hold 60–180 cells for 150 gens | Balance growth and stability |
-| L5 | **Final Assembly** | Hit receptor + keep core alive to gen 260 | Multi-objective under pressure |
+Selections can be **captured as custom prefabs** via the Capture panel in the sidebar: name it, add a description, and it appears in your Custom palette permanently.
 
-### Circuit Academy
+---
 
-A guided practice range that teaches GoL signal logic from first principles. Each level ships with a **guide card** (bottom-left of the board) that explains the concept and offers up to three progressive hints on demand.
+## 💻 Script Kernel
 
+A collapsible code editor drawer at the bottom of the workspace. Write JavaScript that runs against a live SDK injected into each cell.
+
+### SDK Reference
+
+```js
+// Available as top-level variables in every cell
+
+cells.size            // current alive cell count
+cells.add(col, row)   // set a cell alive
+cells.remove(col, row)
+cells.fill(x, y, w, h, density)  // random fill in a rect
+cells.clear()
+cells.forEach((col, row) => {})  // iterate alive cells
+
+rules.birth           // current B set as array, e.g. [3]
+rules.survival        // current S set as array, e.g. [2,3]
+rules.set([3,6], [2,3])          // change rule live
+rules.toString()      // → "B3/S23"
+
+sim.generation        // current generation number
+sim.step(n)           // advance n generations
+sim.play() / sim.pause()
+sim.running           // boolean
+
+canvas.ctx            // CanvasRenderingContext2D
+canvas.width          // CSS pixel width
+canvas.height         // usable height (above timeline bar)
+
+globals               // shared object — persist data between cells/hooks
+
+hook(name, fn)        // register a pipeline hook; returns unsubscribe fn
+// hook names: 'afterStep' | 'beforeDraw' | 'afterDraw'
+
+log(...args)          // print to the cell's output strip
 ```
-┌──────────────────────────────────┐
-│  SIGNAL CANCELLATION (NOT GATE)  │
-│                                  │
-│  When an SE glider meets an NW   │
-│  glider head-on, they annihilate │
-│  completely — no residue. This   │
-│  is the atomic NOT operation.    │
-│                                  │
-│  [ Hint 1 ]  [ Hint 2 ]  ...    │
-└──────────────────────────────────┘
+
+### Example: live population sparkline
+
+```js
+const hist = [];
+hook('afterStep', () => {
+  hist.push(cells.size);
+  if (hist.length > 200) hist.shift();
+});
+hook('afterDraw', () => {
+  if (hist.length < 2) return;
+  const { ctx, width, height } = canvas;
+  const W = 160, H = 48, x0 = width - W - 10, y0 = height - H - 22;
+  const mx = Math.max(...hist, 1), mn = Math.min(...hist), rng = mx - mn || 1;
+  ctx.save();
+  ctx.fillStyle = 'rgba(8,14,22,0.82)';
+  ctx.fillRect(x0 - 6, y0 - 6, W + 12, H + 20);
+  ctx.strokeStyle = '#6fffaa'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  hist.forEach((v, i) => {
+    const px = x0 + (i / (hist.length - 1)) * W;
+    const py = y0 + H - ((v - mn) / rng) * H;
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+  ctx.restore();
+});
 ```
 
-| # | Name | Teaches | Interaction |
-|---|---|---|---|
-| CA-1 | **Stream Rider** | Gliders as signal packets, c/4 speed | Watch — just press Play |
-| CA-2 | **Signal Stop** | Eater-1 as a signal terminator | Place an Eater to protect the red danger zone |
-| CA-3 | **Parallel Streams** | Independent streams don't interfere | Watch — two guns, two receptors |
-| CA-4 | **Not Today** | Head-on annihilation = NOT gate | Watch — two opposing guns cancel every glider pair |
-| CA-5 | **OR Gate** | Either stream reaching the receptor is a 1 | Watch — two guns feed one receptor |
-| CA-6 | **AND Gate** | Both streams must reach the receptor | Route both signals to a shared zone |
-| CA-7 | **Signal Crossing** | Perpendicular streams cross without cancelling | Watch — SE and SW streams cross at the centre |
+Built-in sample scripts (available from the dropdown): `status`, `seed`, `symmetric`, `sparkline`, `hud`, `rule-cycle`, `pulse`, `one-shot`.
 
-#### How the NOT gate works
+The kernel toolbar shows active hook count. Individual cells show `hooked`, `ok`, or `err` status chips. A **command mode** (Vim-style `j/k/Enter/D/Z/P`) is available for keyboard-only navigation of the cell list.
 
-```
-  ⊞ SE Gun ──── glider → · · · · ✦ · · · · ← glider ──── NW Gun ⊞
-                                  ↑
-                            annihilate
-                         (both disappear)
+---
 
-  Without the NW gun, the SE stream continues → danger zone.
-  With the NW gun correctly aimed → all packets cancel → zone stays empty.
-```
+## 📓 Journal
+
+A live research journal that auto-discovers patterns on the board.
+
+- **Auto-feed** — detects still lifes, oscillators, ships, and methuselahs as they emerge; logs them with generation, population, and bounding box
+- **Snapshots** — pin the current board state as a named entry with a canvas thumbnail
+- **Pins** — mark any generation on the timeline with a label
+- **Cinematic scenes** — sequence multiple snapshots into a presentation
+- **Export** — save the full journal as a markdown file
 
 ---
 
 ## 🌐 3D Manifold Modes
 
-Switch from the mode dropdown (keys `3`–`7`) to run the same GoL engine on curved surfaces rendered in WebGL via Three.js.
+Switch from the mode dropdown (keys `3–7`) to run the same engine on curved surfaces rendered in WebGL.
 
-Left-click paints. Right-drag rotates the view. Scroll zooms. The game uses the surface's topology to determine which cells are neighbours — wrapping and identification are exact.
+Left-click paints. Right-drag rotates the view. Scroll zooms. Neighbour lookups use the surface's exact topology — wrapping and identification are mathematically correct.
 
-### Surface Topology Reference
-
-```
-FLAT (Sandbox)          TORUS                   KLEIN BOTTLE
-┌───────────┐           ┌───────────┐           ┌───────────┐
-│           │           │           │⟷          │           │⟷
-│  no edge  │           │  wraps    │           │  wraps    │
-│  wrap     │           │  all 4    │           │  L/R norm │
-│           │           │  sides    │           │  T/B flip │
-└───────────┘           └───────────┘           └───────────┘
-                              ↕↕                     ↕↑ flipped
-
-MÖBIUS STRIP            CYLINDER
-┌───────────┐           ┌───────────┐
-│           │⟷ flipped  │           │⟷ wraps
-│  L/R wrap │           │  open top │
-│  with     │           │  and      │
-│  Y flip   │           │  bottom   │
-└───────────┘           └───────────┘
-  absorbing top/bottom    absorbing top/bottom
-```
-
-| Mode | Topology | Orientable | Boundary |
-|---|---|---|---|
-| **Sphere** | S² | ✅ Yes | None |
-| **Torus** | T² | ✅ Yes | None |
-| **Klein Bottle** | K | ❌ No | None |
-| **Möbius Strip** | M | ❌ No | Open edges (absorbing) |
-| **Cylinder** | C | ✅ Yes | Open edges (absorbing) |
-
-Each surface uses a parametric `surfaceFunc(s, t)` where `s, t ∈ [0, 1)` to map cell coordinates onto a 3D mesh. Click raycasting uses UV attributes on the background mesh to identify which cell you tapped.
+| Mode | Key | Topology | Orientable | Edges |
+|---|---|---|---|---|
+| **Sphere** | `3` | S² | ✅ | None |
+| **Torus** | `4` | T² | ✅ | None |
+| **Klein Bottle** | `5` | K | ❌ | None |
+| **Möbius Strip** | `6` | M | ❌ | Absorbing |
+| **Cylinder** | `7` | C | ✅ | Absorbing |
 
 ---
 
-## 💡 Starter Experiments
+## 🏆 Arcade Missions
 
-You don't need to know any GoL theory to have fun. Here are five things to try in the first five minutes:
+Switch to Arcade mode, pick a level, press **Start Level**.
 
-**1. The Crossfire**
-Click **Load Demo**. Two Gosper guns fire at each other. Watch gliders annihilate on contact. You've just seen a NOT gate in the wild.
-
-**2. Tame the Stream**
-Start a fresh Sandbox. Drop a **Gosper Glider Gun** (Required category). Let it fire for 30–50 gens. Then drag an **Eater-1** directly into the stream and watch it intercept every packet and survive.
-
-**3. Rewind a Crash**
-Run any setup until something chaotic happens. Hit the **⏮** button to jump back to generation 0. Scrub slowly forward with `N` to replay the crash frame by frame.
-
-**4. GoL on a Doughnut**
-Press `4` to switch to Torus mode. Draw a glider near the right edge and watch it re-enter from the left. Drop a gun near the top and watch its stream wrap around.
-
-**5. The Die Hard Self-Destruct**
-Drop a **Die Hard** methuselah (Circuit category → Seeds). Press Play and step away. At exactly generation 130, every cell vanishes. No residue. A clean timed demolition.
+| # | Name | Objective |
+|---|---|---|
+| L1 | Courier Duty | Route a glider to the receptor within 180 gens |
+| L2 | Beacon Watch | Keep the beacon alive for 120/160 gens |
+| L3 | Twin Switch Boot | Trigger both switches within 220 gens |
+| L4 | Population Tempo | Hold 60–180 cells for 150 consecutive gens |
+| L5 | Final Assembly | Hit receptor + protect core to gen 260 |
 
 ---
 
-## Architecture Notes
+## 🎓 Circuit Academy
 
-For contributors and the curious:
+Seven guided levels that teach GoL signal logic. Each has a guide card with progressive hints.
 
-- **Single-file IIFE** — all logic lives in `app.js` (~2500 lines). No bundler, no framework.
-- **Two canvases** — `#lifeCanvas` (Canvas 2D, flat modes) and `#sphereCanvas` (WebGL via Three.js, 3D modes) share the same DOM slot; one is hidden at a time.
-- **Shared WebGL renderer** — `getRenderer()` returns a singleton `THREE.WebGLRenderer`. Switching between 3D manifolds reuses it without creating a new context.
-- **Alive cell storage** — cells are stored as `Set<string>` of `"x,y"` keys. Shared state or per-mode state depending on the checkbox.
-- **Surface polymorphism** — every topology is a `SURFACES[mode]` entry with a `cellKey(x, y)` function. The core `stepLife()` loop calls `surface.cellKey()` for neighbour lookups — no mode-specific branching.
-- **History buffer** — `state.histFrames` is a 600-entry circular array of `{gen, alive: Set}` snapshots. `tickForward()` snapshots after each step; `tickBackward()` restores from the buffer. Scrubbing calls `restoreFrame(idx)` which replaces the alive set in place.
-- **Level system** — each level is a plain JS object with `setup()`, `evaluate(levelState)`, and `progress(levelState)`. Circuit Academy levels add a `guide: {concept, body, hints[]}` field that auto-shows the guide card.
+| # | Name | Concept |
+|---|---|---|
+| CA-1 | Stream Rider | Gliders as signal packets |
+| CA-2 | Signal Stop | Eater-1 as terminator |
+| CA-3 | Parallel Streams | Independent streams don't interfere |
+| CA-4 | Not Today | Head-on annihilation = NOT gate |
+| CA-5 | OR Gate | Either stream reaching receptor = 1 |
+| CA-6 | AND Gate | Both streams must reach receptor |
+| CA-7 | Signal Crossing | Perpendicular streams cross without cancelling |
+
+---
+
+## Architecture
+
+- **Single-file IIFE** — all ~7,400 lines in `app.js`. No bundler, no framework, zero runtime dependencies.
+- **Two canvases** — `#lifeCanvas` (Canvas 2D, flat modes) and `#sphereCanvas` (WebGL / Three.js, 3D modes). One visible at a time.
+- **Shared WebGL renderer** — `getRenderer()` returns a singleton `THREE.WebGLRenderer`; switching 3D manifolds reuses it.
+- **Alive cell storage** — `Set<string>` of `"x,y"` keys. Shared or per-surface depending on the checkbox.
+- **Surface polymorphism** — each topology is a `SURFACES[mode]` entry with a `cellKey(col, row)` function. `stepLife()` calls it for neighbour wrapping — no branching in the hot loop.
+- **History buffer** — 600-entry circular array of `{gen, alive: Set}` snapshots. `tickForward()` appends; `tickBackward()` restores. Scrubbing calls `restoreFrame(idx)`.
+- **Script Kernel** — cells are isolated async functions given a capability SDK. Hooks register into `_kernel.hooks.{afterStep,beforeDraw,afterDraw}` Sets. Command mode provides Vim-style keyboard navigation.
+- **Level system** — each level is `{setup(), evaluate(state), progress(state)}`. CA levels add `guide: {concept, body, hints[]}` for the guide card.
 
 ```
-app.js structure (high level)
-─────────────────────────────
-DOM refs
-State object
-Constants (SPHERE_COLS, MAX_HIST, SPEED_TIERS …)
-REQUIRED_PREFABS  ──┐
-CUSTOM_PREFABS    ──┤── merged into PREFABS[]
-CIRCUIT_PREFABS   ──┘
-LEVELS[]  (L1–L5 + CA-1–CA-4)
-SURFACES{}  (flat, torus, klein, mobius, cylinder, sphere)
-Core functions  (stepLife, activeAlive, setCell …)
-3D renderers    (sphere, manifold, shared getRenderer)
-Draw pipeline   (drawBackground → drawGrid → drawCells → drawZones → drawHover)
-Time machine    (snapshotNow, restoreFrame, tickForward, tickBackward)
-UI setup        (setupControls, setupTimeline, setupCanvasInput, setupShortcuts)
+app.js (high-level structure)
+────────────────────────────
+DOM refs  ·  State object  ·  Constants
+PREFABS[]  (Required + Custom + Circuit)
+LEVELS[]   (L1–L5 + CA-1–CA-7)
+SURFACES{} (flat, sphere, torus, klein, mobius, cylinder)
+Core       (stepLife, stepLenia, activeAlive, setCell …)
+3D         (initSphereRenderer, initManifoldRenderer, getRenderer)
+Draw       (background → grid → cells → zones → fields → lenses
+            → selection → hover → stamp hint → selection hint → afterDraw hooks)
+Time       (snapshotNow, restoreFrame, tickForward, tickBackward)
+Script     (SDK, _runCell, _kernel.hooks, SCRIPT_SAMPLES)
+UI setup   (setupControls → setupCanvasInput → setupShortcuts
+            → setupTimeline → setupRuleLab → setupPhysicsLab
+            → setupWaveLab → setupTypeLab → setupEvoLab
+            → setupZoneLab → setupFieldLab → setupLensLab
+            → setupLibrary → setupCaptureLab → setupAnalysisLab
+            → setupNotebook → buildPalette → setupScriptKernel)
 init()
 ```
 
 ---
 
-## Development Scripts
+## Development
 
 ```bash
-npm run serve   # start local server on :5173
+npm run serve   # dev server on :5173
 npm run check   # node --check syntax validation
 npm start       # alias for serve
 ```
 
 ---
 
-## Roadmap ideas
-
-- [x] Export / import board state as RLE or plaintext Life format
-- [x] Rule editor (try HighLife B36/S23, Seeds B2/S, Day & Night B3678/S34678)
-- [x] Pattern search / period detector
-- [x] Notebook layer — annotate discoveries, save named sessions
-- [x] More Circuit Academy levels: AND gate, OR gate, signal crossing (CA-5 through CA-7)
-- [ ] WebAssembly core for large boards (10,000+ live cells without slowdown)
-
----
-
 <div align="center">
 
-Built with 🟢 vanilla JS · 🌐 Three.js · ❤️ curiosity
-
-*"Any sufficiently complicated cellular automaton contains an ad hoc, informally-specified, bug-ridden, slow implementation of half of Conway's Game of Life."* — apologies to Greenspun
+Built with vanilla JS · Three.js · curiosity
 
 </div>
