@@ -291,10 +291,46 @@
     globals: Object.create(null),
     hooks: { afterStep: new Set(), beforeDraw: new Set(), afterDraw: new Set() },
   };
+  let _hookRegistry = []; // { id, hookName, cellId, enabled, fn }
+  let _hookIdSeq = 0;
+  let _hooksPaused = false;
+
+  // Command mode state
+  let _cmdModeCell   = null;  // selected cell id, or null when not in command mode
+  let _cmdClipboard  = null;  // { code } for cut/copy/paste
+  let _cmdDeletedStack = [];  // [{idx, code}] for undo (Z)
+  let _cmdDPending   = false; let _cmdDTimer = null; // DD = delete
+  let _cmdIPending   = false; let _cmdITimer = null; // II = pause hooks
+  let _cmd0Pending   = false; let _cmd0Timer = null; // 00 = clear output
 
   // Sidebar state
   let _sidebarCollapsed = false;
   let _rightW = 300;
+  function _syncTlBottom() {
+    const panel = document.getElementById("scriptPanel");
+    if (!panel) return;
+    const h = panel.getBoundingClientRect().height;
+    document.documentElement.style.setProperty("--tl-bottom", Math.max(0, h - 1) + "px");
+  }
+
+  function _toggleScriptPanel() {
+    const panel = document.getElementById("scriptPanel");
+    const btn   = document.getElementById("scriptDrawerToggle");
+    const sel   = document.getElementById("scriptSampleSelect");
+    if (!panel) return;
+    const collapsed = panel.classList.toggle("bp-collapsed");
+    if (btn) btn.textContent = collapsed ? "▲" : "▼";
+    if (sel) sel.disabled = collapsed;
+    if (collapsed) _exitCmdMode();
+    requestAnimationFrame(_syncTlBottom);
+    if (!collapsed) {
+      // CodeMirror can't measure dimensions while bp-body is display:none.
+      // Refresh all editors now that the panel is visible.
+      requestAnimationFrame(() => {
+        for (const cell of _scriptCells) cell.editor?.refresh();
+      });
+    }
+  }
 
   const REQUIRED_PREFABS = [
     {
@@ -3101,6 +3137,7 @@
   }
 
   function draw() {
+    for (const fn of _kernel.hooks.beforeDraw) { ctx.save(); try { fn(); } catch (_) {} ctx.restore(); }
     drawBackground();
     drawGrid();
     drawCells();
@@ -3112,6 +3149,7 @@
     drawNotebookPins();
     drawHover();
     drawLenses();
+    for (const fn of _kernel.hooks.afterDraw) { ctx.save(); try { fn(); } catch (_) {} ctx.restore(); }
   }
 
   function updateHud() {
@@ -3174,6 +3212,7 @@
     if (state.leniaMode) stepLenia();
     else stepLife();
     snapshotNow();
+    for (const fn of _kernel.hooks.afterStep) try { fn(); } catch (_) {}
     if (state.notebook.autoEnabled && state.generation % 30 === 0) nbCheckAuto();
   }
 
@@ -4348,6 +4387,9 @@
         setCanvasMode(state.canvasMode === "force" ? "paint" : "force");
       } else if (ev.key.toLowerCase() === "l" && !mod) {
         setCanvasMode(state.canvasMode === "lens" ? "paint" : "lens");
+      } else if (ev.key === "~" || ev.key === "`") {
+        _toggleScriptPanel();
+        ev.preventDefault();
       } else if (ev.key === "Escape") {
         if (state.canvasMode === "object") {
           const prev = state._prevCanvasMode || "paint";
@@ -5846,7 +5888,8 @@
         if (!dragging) return;
         const newH = Math.max(80, Math.min(600, startH - (e.clientY - startY)));
         scriptPanel.style.setProperty("--bottom-h", newH + "px");
-        scriptPanel.style.flex = `0 0 ${newH}px`;
+        scriptPanel.style.height = `${newH}px`;
+        document.documentElement.style.setProperty("--tl-bottom", Math.max(0, newH - 1) + "px");
       });
       document.addEventListener("pointerup", () => {
         if (dragging) { dragging = false; bottomResizer.classList.remove("dragging"); }
@@ -5854,15 +5897,8 @@
     }
 
     // Script Kernel toggle
-    function _toggleScriptPanel() {
-      const panel = document.getElementById("scriptPanel");
-      const btn = document.getElementById("scriptDrawerToggle");
-      if (!panel) return;
-      const collapsed = panel.classList.toggle("bp-collapsed");
-      if (btn) btn.textContent = collapsed ? "▲" : "▼";
-    }
     document.getElementById("scriptHandle")?.addEventListener("click", (e) => {
-      if (e.target.closest(".sc-btn")) return;
+      if (e.target.closest(".sc-btn") || e.target.closest("select")) return;
       _toggleScriptPanel();
     });
     document.getElementById("scriptDrawerToggle")?.addEventListener("click", (e) => {
@@ -5874,10 +5910,14 @@
   // ── Script Kernel ────────────────────────────────────────────────────────
   function _updateHooksBadge() {
     const badge = document.getElementById("hooksActiveBadge");
-    if (!badge) return;
-    const total = Object.values(_kernel.hooks).reduce((s, h) => s + h.size, 0);
-    badge.textContent = `${total} hook${total !== 1 ? "s" : ""}`;
-    badge.style.display = total > 0 ? "" : "none";
+    const btn   = document.getElementById("scriptClearHooks");
+    const n = _hookRegistry.length;
+    if (badge) {
+      badge.style.display = n > 0 ? "" : "none";
+      badge.textContent   = _hooksPaused ? `${n} paused` : `${n} hook${n !== 1 ? "s" : ""}`;
+      badge.style.opacity = _hooksPaused ? "0.5" : "1";
+    }
+    if (btn) btn.textContent = _hooksPaused ? "▶ Hooks" : "⊘ Hooks";
   }
 
   function _saveScript() {
@@ -5900,10 +5940,10 @@
     return cell.editor ? cell.editor.getValue() : (cell.ta ? cell.ta.value : (cell.code || ""));
   }
 
-  function _addCell(code = "") {
+  function _addCellAt(insertIdx, code = "", focusEditor = true) {
     const id = ++_scriptIdSeq;
-    const cell = { id, code, _hookCleanups: [] };
-    _scriptCells.push(cell);
+    const cell = { id, code, _hookCleanups: [], _status: "idle" };
+    _scriptCells.splice(insertIdx, 0, cell);
 
     const container = document.getElementById("scriptCells");
     if (!container) return cell;
@@ -5911,26 +5951,33 @@
     const wrap = document.createElement("div");
     wrap.className = "sc-cell";
     wrap.dataset.cellId = id;
+    wrap.tabIndex = -1; // focusable so command mode keeps focus inside the panel
 
+    // ── cell bar ─────────────────────────────────────────────────────
     const bar = document.createElement("div");
     bar.className = "sc-cell-bar";
+
+    const dot = document.createElement("span");
+    dot.className = "sc-dot sc-dot-idle";
+    dot.title = "idle";
+    cell._dot = dot;
+
     const label = document.createElement("span");
     label.className = "sc-cell-label";
-    label.textContent = `cell ${id}`;
+    label.textContent = `[${id}]`;
 
-    const expandBtn = document.createElement("button");
-    expandBtn.className = "sc-btn";
-    expandBtn.textContent = "↕";
-    expandBtn.title = "Expand/collapse";
-    expandBtn.addEventListener("click", () => {
-      wrap.classList.toggle("sc-expanded");
-      cell.editor?.refresh();
-    });
+    const hooksChip = document.createElement("span");
+    hooksChip.className = "sc-hooks-chip";
+    hooksChip.style.display = "none";
+    cell._hooksChip = hooksChip;
+
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
 
     const runBtn = document.createElement("button");
-    runBtn.className = "sc-btn";
-    runBtn.textContent = "▶";
-    runBtn.title = "Run (Shift+Enter)";
+    runBtn.className = "sc-btn sc-run-btn";
+    runBtn.textContent = "▶ Run";
+    runBtn.title = "Shift+Enter";
     runBtn.addEventListener("click", () => _runCell(id));
 
     const delBtn = document.createElement("button");
@@ -5939,11 +5986,14 @@
     delBtn.title = "Delete cell";
     delBtn.addEventListener("click", () => _deleteCell(id));
 
+    bar.appendChild(dot);
     bar.appendChild(label);
-    bar.appendChild(expandBtn);
+    bar.appendChild(hooksChip);
+    bar.appendChild(spacer);
     bar.appendChild(runBtn);
     bar.appendChild(delBtn);
 
+    // ── editor ───────────────────────────────────────────────────────
     const editorWrap = document.createElement("div");
     editorWrap.className = "sc-editor-wrap";
 
@@ -5952,26 +6002,35 @@
         value: code,
         mode: "javascript",
         theme: "dracula",
-        lineNumbers: false,
+        lineNumbers: true,
         matchBrackets: true,
-        lineWrapping: true,
+        lineWrapping: false,
         indentUnit: 2,
         tabSize: 2,
+        viewportMargin: Infinity,
         extraKeys: {
           "Shift-Enter": () => _runCell(id),
-          "Tab": cm => cm.execCommand("indentMore"),
-          "Shift-Tab": cm => cm.execCommand("indentLess"),
+          "Tab":         cm => cm.execCommand("indentMore"),
+          "Shift-Tab":   cm => cm.execCommand("indentLess"),
+          "Ctrl-Enter":  () => _runCell(id),
         },
       });
       cell.editor = editor;
       editor.on("change", () => { cell.code = editor.getValue(); _saveScript(); });
-      setTimeout(() => editor.refresh(), 0);
+      // Escape → command mode (use native keydown — CM5 names the key "Esc" not "Escape"
+      // so extraKeys is unreliable; native ev.key is always "Escape")
+      editor.on("keydown", (_cm, ev) => {
+        if (ev.key === "Escape") { ev.preventDefault(); _enterCmdMode(id); }
+      });
+      editor.on("focus", () => { wrap.classList.add("sc-cell-focused"); _exitCmdMode(); });
+      editor.on("blur",  () => wrap.classList.remove("sc-cell-focused"));
+      setTimeout(() => editor.refresh(), 200);
     } else {
       const ta = document.createElement("textarea");
       ta.value = code;
       ta.spellcheck = false;
       ta.autocomplete = "off";
-      ta.placeholder = "// sdk, cells, rules, sim, canvas, globals, print\n// Shift+Enter to run";
+      ta.placeholder = "// Shift+Enter to run";
       ta.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); _runCell(id); }
       });
@@ -5980,20 +6039,343 @@
       editorWrap.appendChild(ta);
     }
 
+    // ── output ───────────────────────────────────────────────────────
     const output = document.createElement("div");
     output.className = "sc-output";
     output.style.display = "none";
     cell._output = output;
 
+    wrap.addEventListener("mousedown", (e) => {
+      if (!e.target.closest(".sc-editor-wrap") && !e.target.closest(".sc-btn") && !e.target.closest("select")) {
+        e.preventDefault();
+        _enterCmdMode(id);
+      }
+    });
+
     wrap.appendChild(bar);
     wrap.appendChild(editorWrap);
     wrap.appendChild(output);
-    container.appendChild(wrap);
+    container.insertBefore(wrap, container.children[insertIdx] ?? null);
     cell._elem = wrap;
 
-    if (cell.editor) cell.editor.focus();
-    else cell.ta?.focus();
+    if (focusEditor) {
+      if (cell.editor) cell.editor.focus();
+      else cell.ta?.focus();
+    }
     return cell;
+  }
+
+  function _addCell(code = "") {
+    return _addCellAt(_scriptCells.length, code, true);
+  }
+
+  function _setCellStatus(cell, status) {
+    cell._status = status;
+    if (!cell._dot) return;
+    cell._dot.className = `sc-dot sc-dot-${status}`;
+    cell._dot.title = status;
+  }
+
+  function _updateCellHooksChip(cell) {
+    if (!cell._hooksChip) return;
+    const count = _hookRegistry.filter(h => h.cellId === cell.id).length;
+    if (count > 0) {
+      cell._hooksChip.textContent = `${count} hook${count > 1 ? "s" : ""}`;
+      cell._hooksChip.style.display = "";
+    } else {
+      cell._hooksChip.style.display = "none";
+    }
+  }
+
+  const _HOOK_LABELS = { afterStep: "after-step", beforeDraw: "pre-draw", afterDraw: "after-draw" };
+
+  function _hookActiveFn(entry) { return entry._wrapper || entry.fn; }
+
+  function _setHookProfiling(entry, enable) {
+    if (entry.profiling === enable) return;
+    const hooks = _kernel.hooks[entry.hookName];
+    const active = entry.enabled && !_hooksPaused;
+    if (enable) {
+      if (active) hooks?.delete(entry.fn);
+      const p = entry.profile;
+      entry._wrapper = () => {
+        const t0 = performance.now();
+        try { entry.fn(); } catch (_) {}
+        const ms = performance.now() - t0;
+        p.lastMs = ms;
+        p.calls++;
+        p.totalMs += ms;
+        p.avgMs = p.avgMs * 0.85 + ms * 0.15;
+        if (ms < p.minMs) p.minMs = ms;
+        if (ms > p.maxMs) p.maxMs = ms;
+        if (entry._statEl) {
+          const avg = p.avgMs < 0.1 ? p.avgMs.toFixed(3) : p.avgMs.toFixed(2);
+          const peak = p.maxMs < 0.1 ? p.maxMs.toFixed(3) : p.maxMs.toFixed(2);
+          entry._statEl.textContent = `${avg}ms avg  ${peak}ms pk  ×${p.calls}`;
+        }
+      };
+      entry.profiling = true;
+      if (active) hooks?.add(entry._wrapper);
+    } else {
+      if (active && entry._wrapper) { hooks?.delete(entry._wrapper); hooks?.add(entry.fn); }
+      entry._wrapper = null;
+      entry.profiling = false;
+      if (entry._statEl) entry._statEl.textContent = "";
+    }
+  }
+
+  function _renderHooksList() {
+    const panel = document.getElementById("hooksListPanel");
+    const list  = document.getElementById("hooksList");
+    if (!panel || !list) return;
+    if (_hookRegistry.length === 0) { panel.style.display = "none"; return; }
+    panel.style.display = "";
+    list.innerHTML = "";
+
+    for (const entry of _hookRegistry) {
+      const active = entry.enabled && !_hooksPaused;
+      const row = document.createElement("div");
+      row.className = "sc-hook-row" + (active ? "" : " sc-hook-row-dim");
+
+      const dot = document.createElement("span");
+      dot.className = `sc-dot ${active ? (entry.profiling ? "sc-dot-running" : "sc-dot-hooked") : "sc-dot-idle"}`;
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "sc-hook-name";
+      nameEl.textContent = _HOOK_LABELS[entry.hookName] || entry.hookName;
+
+      const cellRef = document.createElement("span");
+      cellRef.className = "sc-hook-cell-ref";
+      cellRef.textContent = `[${entry.cellId}]`;
+
+      // stat display — written directly by the profiling wrapper each frame
+      const statEl = document.createElement("span");
+      statEl.className = "sc-hook-stat";
+      entry._statEl = statEl;
+      if (entry.profiling && entry.profile.calls > 0) {
+        const p = entry.profile;
+        const avg  = p.avgMs  < 0.1 ? p.avgMs.toFixed(3)  : p.avgMs.toFixed(2);
+        const peak = p.maxMs  < 0.1 ? p.maxMs.toFixed(3)  : p.maxMs.toFixed(2);
+        statEl.textContent = `${avg}ms avg  ${peak}ms pk  ×${p.calls}`;
+      }
+
+      const spacer = document.createElement("span");
+      spacer.style.flex = "1";
+
+      // profile toggle
+      const profBtn = document.createElement("button");
+      profBtn.className = "sc-btn" + (entry.profiling ? " sc-prof-active" : "");
+      profBtn.title = entry.profiling ? "Stop profiling" : "Profile execution time";
+      profBtn.textContent = "⏱";
+      profBtn.addEventListener("click", () => {
+        _setHookProfiling(entry, !entry.profiling);
+        _renderHooksList();
+      });
+
+      // enable/disable toggle
+      const toggleBtn = document.createElement("button");
+      toggleBtn.className = "sc-btn";
+      toggleBtn.title = entry.enabled ? "Disable" : "Enable";
+      toggleBtn.textContent = entry.enabled ? "⏸" : "▶";
+      toggleBtn.addEventListener("click", () => {
+        entry.enabled = !entry.enabled;
+        const afn = _hookActiveFn(entry);
+        if (entry.enabled && !_hooksPaused) _kernel.hooks[entry.hookName]?.add(afn);
+        else _kernel.hooks[entry.hookName]?.delete(afn);
+        const c = _scriptCells.find(s => s.id === entry.cellId);
+        if (c) {
+          const any = _hookRegistry.some(h => h.cellId === entry.cellId && h.enabled);
+          _setCellStatus(c, any ? "hooked" : "ok");
+          _updateCellHooksChip(c);
+        }
+        _updateHooksBadge();
+        _renderHooksList();
+      });
+
+      // delete
+      const delBtn = document.createElement("button");
+      delBtn.className = "sc-btn sc-btn-danger";
+      delBtn.title = "Remove hook";
+      delBtn.textContent = "✕";
+      delBtn.addEventListener("click", () => {
+        _kernel.hooks[entry.hookName]?.delete(entry.fn);
+        if (entry._wrapper) _kernel.hooks[entry.hookName]?.delete(entry._wrapper);
+        _hookRegistry = _hookRegistry.filter(h => h.id !== entry.id);
+        const c = _scriptCells.find(s => s.id === entry.cellId);
+        if (c) {
+          _updateCellHooksChip(c);
+          const any = _hookRegistry.some(h => h.cellId === entry.cellId && h.enabled);
+          if (!any && c._status === "hooked") _setCellStatus(c, "ok");
+        }
+        _updateHooksBadge();
+        _renderHooksList();
+      });
+
+      row.append(dot, nameEl, cellRef, statEl, spacer, profBtn, toggleBtn, delBtn);
+      list.appendChild(row);
+    }
+  }
+
+  // ── Command mode ─────────────────────────────────────────────────────────
+  function _enterCmdMode(cellId) {
+    if (_cmdModeCell !== null) {
+      _scriptCells.find(c => c.id === _cmdModeCell)?._elem?.classList.remove("sc-cell-cmd");
+    }
+    _cmdModeCell = cellId;
+    if (cellId === null) return;
+    const cell = _scriptCells.find(c => c.id === cellId);
+    if (cell?._elem) {
+      cell._elem.classList.add("sc-cell-cmd");
+      cell._elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      cell._elem.focus({ preventScroll: true }); // keep focus inside panel so focusin guard doesn't fire
+    }
+  }
+
+  function _exitCmdMode() {
+    _enterCmdMode(null);
+    _cmdDPending = false; _cmdIPending = false; _cmd0Pending = false;
+    clearTimeout(_cmdDTimer); clearTimeout(_cmdITimer); clearTimeout(_cmd0Timer);
+  }
+
+  function _cmdSelectDelta(delta) {
+    const idx = _scriptCells.findIndex(c => c.id === _cmdModeCell);
+    if (idx === -1) return;
+    const ni = Math.max(0, Math.min(_scriptCells.length - 1, idx + delta));
+    if (ni !== idx) _enterCmdMode(_scriptCells[ni].id);
+  }
+
+  function _cmdDeleteSelected() {
+    const idx = _scriptCells.findIndex(c => c.id === _cmdModeCell);
+    if (idx === -1) return;
+    const cell = _scriptCells[idx];
+    _cmdDeletedStack.push({ idx, code: _cellCode(cell) });
+    if (_cmdDeletedStack.length > 30) _cmdDeletedStack.shift();
+    _deleteCell(cell.id);
+    if (_scriptCells.length === 0) { _exitCmdMode(); return; }
+    _enterCmdMode(_scriptCells[Math.min(idx, _scriptCells.length - 1)].id);
+  }
+
+  function _cmdUndoDelete() {
+    if (!_cmdDeletedStack.length) return;
+    const { idx, code } = _cmdDeletedStack.pop();
+    const cell = _addCellAt(Math.min(idx, _scriptCells.length), code, false);
+    _enterCmdMode(cell.id);
+  }
+
+  function _cmdCutSelected() {
+    const cell = _scriptCells.find(c => c.id === _cmdModeCell);
+    if (!cell) return;
+    _cmdClipboard = { code: _cellCode(cell) };
+    _cmdDeleteSelected();
+  }
+
+  function _cmdCopySelected() {
+    const cell = _scriptCells.find(c => c.id === _cmdModeCell);
+    if (!cell) return;
+    _cmdClipboard = { code: _cellCode(cell) };
+  }
+
+  function _cmdPaste(above) {
+    if (!_cmdClipboard) return;
+    const idx = _scriptCells.findIndex(c => c.id === _cmdModeCell);
+    const insertIdx = idx === -1 ? _scriptCells.length : (above ? idx : idx + 1);
+    const cell = _addCellAt(insertIdx, _cmdClipboard.code, false);
+    _enterCmdMode(cell.id);
+  }
+
+  function _cmdToggleOutput() {
+    const cell = _scriptCells.find(c => c.id === _cmdModeCell);
+    if (!cell?._output) return;
+    const out = cell._output;
+    out.style.display = (out.style.display === "none" || !out.textContent) ? "" : "none";
+    if (!out.textContent) out.style.display = "none";
+  }
+
+  function _cmdToggleLineNumbers() {
+    const cell = _scriptCells.find(c => c.id === _cmdModeCell);
+    if (!cell?.editor) return;
+    cell.editor.setOption("lineNumbers", !cell.editor.getOption("lineNumbers"));
+  }
+
+  function _handleCmdModeKey(ev) {
+    const panel = document.getElementById("scriptPanel");
+    if (!panel || panel.classList.contains("bp-collapsed")) return;
+    const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    const mod = ev.ctrlKey || ev.metaKey;
+
+    const clearSeq = () => {
+      _cmdDPending = false; _cmdIPending = false; _cmd0Pending = false;
+      clearTimeout(_cmdDTimer); clearTimeout(_cmdITimer); clearTimeout(_cmd0Timer);
+    };
+    const done = () => { ev.preventDefault(); return true; };
+
+    // Shift+Enter — run + advance
+    if (k === "Enter" && ev.shiftKey) {
+      const idx = _scriptCells.findIndex(c => c.id === _cmdModeCell);
+      _runCell(_cmdModeCell);
+      if (idx >= _scriptCells.length - 1) _enterCmdMode(_addCellAt(_scriptCells.length, "", false).id);
+      else _cmdSelectDelta(1);
+      return done();
+    }
+    // Ctrl+Enter — run in place
+    if (k === "Enter" && mod) { _runCell(_cmdModeCell); return done(); }
+    // Enter — edit mode
+    if (k === "Enter") {
+      const cell = _scriptCells.find(c => c.id === _cmdModeCell);
+      _exitCmdMode();
+      cell?.editor ? cell.editor.focus() : cell?.ta?.focus();
+      return done();
+    }
+    // Escape — exit command mode
+    if (k === "Escape") { _exitCmdMode(); return done(); }
+    // Navigation
+    if ((k === "arrowup"   || k === "k") && !mod) { clearSeq(); _cmdSelectDelta(-1); return done(); }
+    if ((k === "arrowdown" || k === "j") && !mod) { clearSeq(); _cmdSelectDelta( 1); return done(); }
+    // Insert above / below
+    if (k === "a" && !mod) {
+      clearSeq();
+      const idx = _scriptCells.findIndex(c => c.id === _cmdModeCell);
+      _enterCmdMode(_addCellAt(idx === -1 ? 0 : idx, "", false).id);
+      return done();
+    }
+    if (k === "b" && !mod) {
+      clearSeq();
+      const idx = _scriptCells.findIndex(c => c.id === _cmdModeCell);
+      _enterCmdMode(_addCellAt(idx === -1 ? _scriptCells.length : idx + 1, "", false).id);
+      return done();
+    }
+    // Delete (D D)
+    if (k === "d" && !mod) {
+      if (_cmdDPending) { clearTimeout(_cmdDTimer); _cmdDPending = false; _cmdDeleteSelected(); }
+      else { _cmdDPending = true; _cmdDTimer = setTimeout(() => { _cmdDPending = false; }, 500); }
+      return done();
+    }
+    // Undo delete
+    if (k === "z" && !mod) { clearSeq(); _cmdUndoDelete(); return done(); }
+    // Cut / copy / paste
+    if (k === "x" && !mod) { clearSeq(); _cmdCutSelected();  return done(); }
+    if (k === "c" && !mod) { clearSeq(); _cmdCopySelected(); return done(); }
+    if (k === "v" && !mod) { clearSeq(); _cmdPaste(ev.shiftKey); return done(); }
+    // Toggle output / line numbers
+    if (k === "o" && !mod) { clearSeq(); _cmdToggleOutput();      return done(); }
+    if (k === "l" && !mod) { clearSeq(); _cmdToggleLineNumbers(); return done(); }
+    // I I — pause/resume hooks
+    if (k === "i" && !mod) {
+      if (_cmdIPending) { clearTimeout(_cmdITimer); _cmdIPending = false; document.getElementById("scriptClearHooks")?.click(); }
+      else { _cmdIPending = true; _cmdITimer = setTimeout(() => { _cmdIPending = false; }, 500); }
+      return done();
+    }
+    // 0 0 — clear selected cell output
+    if (k === "0") {
+      if (_cmd0Pending) {
+        clearTimeout(_cmd0Timer); _cmd0Pending = false;
+        const cell = _scriptCells.find(c => c.id === _cmdModeCell);
+        if (cell?._output) { cell._output.style.display = "none"; cell._output.textContent = ""; }
+      } else { _cmd0Pending = true; _cmd0Timer = setTimeout(() => { _cmd0Pending = false; }, 500); }
+      return done();
+    }
+    clearSeq();
+    return false;
   }
 
   function _deleteCell(id) {
@@ -6013,6 +6395,8 @@
     // Clean previous hooks
     cell._hookCleanups.forEach(fn => fn());
     cell._hookCleanups = [];
+    _setCellStatus(cell, "running");
+    _updateCellHooksChip(cell);
 
     const code = _cellCode(cell);
     const out = cell._output;
@@ -6025,9 +6409,28 @@
     };
 
     const sdkHook = (hookName, fn) => {
-      _kernel.hooks[hookName]?.add(fn);
-      cell._hookCleanups.push(() => _kernel.hooks[hookName]?.delete(fn));
+      if (!_kernel.hooks[hookName]) return () => {};
+      const hid = ++_hookIdSeq;
+      const entry = {
+        id: hid, hookName, cellId: id, enabled: true, fn,
+        profiling: false, _wrapper: null, _statEl: null,
+        profile: { calls: 0, totalMs: 0, avgMs: 0, lastMs: 0, minMs: Infinity, maxMs: 0 },
+      };
+      _hookRegistry.push(entry);
+      if (!_hooksPaused) _kernel.hooks[hookName].add(fn);
+      const unsub = () => {
+        _kernel.hooks[hookName].delete(fn);
+        if (entry._wrapper) _kernel.hooks[hookName].delete(entry._wrapper);
+        _hookRegistry = _hookRegistry.filter(h => h.id !== hid);
+        _updateCellHooksChip(cell);
+        _updateHooksBadge();
+        _renderHooksList();
+      };
+      cell._hookCleanups.push(unsub);
+      _updateCellHooksChip(cell);
       _updateHooksBadge();
+      _renderHooksList();
+      return unsub;
     };
 
     const sdkCells = {
@@ -6054,25 +6457,145 @@
       pause() { if (state.running) { state.running = false; document.getElementById("playBtn").textContent = "Play"; } },
       get running() { return state.running; },
     };
-    const sdkCanvas = { get ctx() { return ctx; }, get width() { return canvas.width / (window.devicePixelRatio || 1); }, get height() { return canvas.height / (window.devicePixelRatio || 1); } };
+    const sdkCanvas = {
+      get ctx() { return ctx; },
+      get width() { return canvas.clientWidth; },
+      get height() {
+        const tlBar = document.getElementById("timelineBar");
+        if (!tlBar) return canvas.clientHeight;
+        const cr = canvas.getBoundingClientRect();
+        const tr = tlBar.getBoundingClientRect();
+        return Math.max(0, tr.top - cr.top);
+      },
+    };
 
     try {
       const fn = new Function("cells", "rules", "sim", "canvas", "globals", "hook", "log", "print", `"use strict"; return (async () => { ${code} })()`);
       await fn(sdkCells, sdkRules, sdkSim, sdkCanvas, _kernel.globals, sdkHook, printFn, printFn);
       if (out && out.textContent === "") out.style.display = "none";
+      _setCellStatus(cell, _hookRegistry.some(h => h.cellId === id) ? "hooked" : "ok");
     } catch (err) {
       if (out) { out.style.display = ""; out.textContent = String(err); out.className = "sc-output sc-err"; }
+      _setCellStatus(cell, "err");
     }
+    _updateCellHooksChip(cell);
     _updateHooksBadge();
   }
 
   const SCRIPT_SAMPLES = {
-    log:       `log('gen:', sim.generation, '  pop:', cells.size);`,
-    fill:      `// seed a 40×40 region at 35% density\ncells.fill(-20, -20, 40, 40, 0.35);\nlog('seeded');`,
-    rules:     `// Day & Night\nrules.set([3,6,7,8], [3,4,6,7,8]);\nlog('rules:', rules.toString());`,
-    hookStep:  `// log population every 60 generations\nhook('afterStep', () => {\n  if (sim.generation % 60 === 0)\n    log('gen', sim.generation, 'pop', cells.size);\n});`,
-    hookPause: `// auto-pause when pop reaches 500\nhook('afterStep', () => {\n  if (cells.size >= 500) {\n    sim.pause();\n    log('paused at', cells.size, 'cells — gen', sim.generation);\n  }\n});`,
-    overlay:   `// tint the canvas each frame\nconst { ctx, width, height } = canvas;\nctx.save();\nctx.fillStyle = 'rgba(91,224,188,0.06)';\nctx.fillRect(0, 0, width, height);\nctx.restore();\nlog('overlay drawn');`,
+
+    status: `log('gen:', sim.generation, '  pop:', cells.size, '  rules:', rules.toString());`,
+
+    seed: `cells.fill(-20, -20, 40, 40, 0.35);\nlog('seeded', cells.size, 'cells');`,
+
+    symmetric:
+`// 4-fold symmetric random seed — great for studying symmetric attractors
+cells.clear();
+const N = 18;
+for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+  if (Math.random() < 0.38) {
+    cells.add( x,  y); cells.add(-x-1,  y);
+    cells.add( x, -y-1); cells.add(-x-1, -y-1);
+  }
+}
+log('symmetric seed —', cells.size, 'cells');`,
+
+    sparkline:
+`// Live population sparkline drawn on canvas corner
+const hist = [];
+hook('afterStep', () => {
+  hist.push(cells.size);
+  if (hist.length > 200) hist.shift();
+});
+hook('afterDraw', () => {
+  if (hist.length < 2) return;
+  const { ctx, width, height } = canvas;
+  const W = 160, H = 48, x0 = width - W - 10, y0 = height - H - 22;
+  const mx = Math.max(...hist, 1), mn = Math.min(...hist, 0), rng = mx - mn || 1;
+  ctx.save();
+  ctx.fillStyle = 'rgba(8,14,22,0.82)';
+  ctx.fillRect(x0-6, y0-6, W+12, H+20);
+  ctx.strokeStyle = '#6fffaa'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  hist.forEach((v,i) => {
+    const px = x0 + (i/(hist.length-1))*W;
+    const py = y0 + H - ((v-mn)/rng)*H;
+    i === 0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+  });
+  ctx.stroke();
+  ctx.fillStyle = '#8ecfaa'; ctx.font = '10px monospace';
+  ctx.fillText('pop ' + cells.size, x0, y0+H+13);
+  ctx.fillStyle = '#334455';
+  ctx.fillText('peak ' + mx, x0+W-52, y0+H+13);
+  ctx.restore();
+});
+log('sparkline active');`,
+
+    hud:
+`// Persistent gen/pop overlay — great for recording sessions
+hook('afterDraw', () => {
+  const { ctx } = canvas;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  ctx.fillRect(8, 8, 162, 46);
+  ctx.font = 'bold 11px monospace';
+  ctx.fillStyle = '#6fffaa';
+  ctx.fillText('GEN  ' + String(sim.generation).padStart(9), 14, 24);
+  ctx.fillStyle = '#5be0bc';
+  ctx.fillText('POP  ' + String(cells.size).padStart(9), 14, 40);
+  ctx.restore();
+});`,
+
+    stability:
+`// Auto-pause when population stabilises (useful for finding still-lifes & oscillators)
+const win = [];
+hook('afterStep', () => {
+  win.push(cells.size); if (win.length > 50) win.shift();
+  if (win.length < 50) return;
+  const lo = Math.min(...win), hi = Math.max(...win);
+  if (hi - lo <= 2 && cells.size > 0) {
+    sim.pause();
+    log('stable — gen', sim.generation, ' pop', cells.size, '±' + (hi-lo));
+  }
+});`,
+
+    events:
+`// Population event monitor — logs growth bursts and detects extinction
+let prev = cells.size, peak = 0;
+hook('afterStep', () => {
+  const d = cells.size - prev; prev = cells.size;
+  peak = Math.max(peak, cells.size);
+  if (d >  60) log('▲ +' + d + '  gen ' + sim.generation + '  pop ' + cells.size);
+  if (d < -60) log('▼ '  + d + '  gen ' + sim.generation + '  pop ' + cells.size);
+  if (cells.size === 0) {
+    sim.pause();
+    log('extinction  gen ' + sim.generation + '  peak was ' + peak);
+  }
+});`,
+
+    oneShot:
+`// Fire-once hook — removes itself after first step.
+// Pattern: store the unsub, call it inside the callback.
+const off = hook('afterStep', () => {
+  log('snapshot  gen:', sim.generation, '  pop:', cells.size);
+  off(); // unregisters this hook immediately
+});`,
+
+    ruleExplore:
+`// Rule explorer — tries each birth count against S23, logs results
+// Restores your original rules when done.
+(async () => {
+  const origB = [...rules.birth], origS = [...rules.survival];
+  log('exploring birth rules with S' + origS.join('') + '…');
+  for (const b of [1,2,3,4,5,6,7,8]) {
+    cells.clear(); cells.fill(-12,-12,24,24,0.40);
+    rules.set([b], origS); sim.step(80);
+    log('B' + b + '/S' + origS.join('') + '  →  pop ' + cells.size);
+  }
+  rules.set(origB, origS);
+  log('restored →', rules.toString());
+})();`,
+
   };
 
   function setupScriptKernel() {
@@ -6086,29 +6609,66 @@
       for (const cell of _scriptCells) await _runCell(cell.id);
     });
     document.getElementById("scriptClearHooks")?.addEventListener("click", () => {
-      for (const cell of _scriptCells) { cell._hookCleanups.forEach(fn => fn()); cell._hookCleanups = []; }
-      for (const k of Object.keys(_kernel.hooks)) _kernel.hooks[k].clear();
+      _hooksPaused = !_hooksPaused;
+      for (const h of _hookRegistry) {
+        if (h.enabled) {
+          const afn = _hookActiveFn(h);
+          if (_hooksPaused) _kernel.hooks[h.hookName]?.delete(afn);
+          else              _kernel.hooks[h.hookName]?.add(afn);
+        }
+      }
       _updateHooksBadge();
+      _renderHooksList();
     });
     document.getElementById("scriptClearAll")?.addEventListener("click", () => {
       [..._scriptCells].map(c => c.id).forEach(id => _deleteCell(id));
     });
 
     const sampleSel = document.getElementById("scriptSampleSelect");
+    if (sampleSel) sampleSel.disabled = true; // starts collapsed
     sampleSel?.addEventListener("change", () => {
       const code = SCRIPT_SAMPLES[sampleSel.value];
       if (!code) return;
       sampleSel.value = "";
-      _addCell(code);
-      document.getElementById("scriptPanel")?.classList.remove("bp-collapsed");
-      const btn = document.getElementById("scriptDrawerToggle");
-      if (btn) btn.textContent = "▼";
+      const panel = document.getElementById("scriptPanel");
+      if (panel?.classList.contains("bp-collapsed")) {
+        panel.classList.remove("bp-collapsed");
+        const btn = document.getElementById("scriptDrawerToggle");
+        if (btn) btn.textContent = "▼";
+        sampleSel.disabled = false;
+      }
+      const first = _scriptCells[0];
+      if (first && _cellCode(first).trim() === "") {
+        if (first.editor) { first.editor.setValue(code); first.editor.focus(); }
+        else if (first.ta) { first.ta.value = code; first.code = code; first.ta.focus(); }
+        first.code = code;
+        _saveScript();
+      } else {
+        _addCell(code);
+      }
     });
 
     _loadScript();
     if (_scriptCells.length === 0) {
-      _addCell("// Script Kernel — sdk: cells, rules, sim, canvas, globals, hook, log\n// Shift+Enter to run  ·  ↕ to expand\nlog('pop:', cells.size, '  gen:', sim.generation);");
+      _addCell("log('gen:', sim.generation, '  pop:', cells.size);");
     }
+
+    // Capture-phase keydown: fires before canvas/CodeMirror handlers.
+    // Only active when a cell is in command mode and the user isn't typing inside an editor.
+    document.addEventListener("keydown", (ev) => {
+      if (_cmdModeCell === null) return;
+      const panel = document.getElementById("scriptPanel");
+      if (!panel || panel.classList.contains("bp-collapsed")) return;
+      if (document.activeElement?.closest(".sc-editor-wrap")) return; // user is editing
+      if (_handleCmdModeKey(ev)) ev.stopPropagation();
+    }, { capture: true });
+
+    // Exit command mode when clicking outside the script panel
+    document.addEventListener("mousedown", (ev) => {
+      if (_cmdModeCell === null) return;
+      const panel = document.getElementById("scriptPanel");
+      if (panel && !panel.contains(ev.target)) _exitCmdMode();
+    });
   }
 
   function setupCaptureLab() {
@@ -6548,7 +7108,7 @@
       state.notebook.scenePlaying = false;
       state.running = false; syncPlayUI(false, false);
       overlay.classList.add("hidden");
-      setOverlay("Notebook playback complete.");
+      setOverlay("Journal playback complete.");
       setTimeout(() => setOverlay(""), 2500);
     }
 
@@ -6562,12 +7122,12 @@
   function nbExport() {
     const entries = state.notebook.entries;
     if (entries.length === 0) {
-      setOverlay("Notebook is empty — nothing to export.");
+      setOverlay("Journal is empty — nothing to export.");
       setTimeout(() => setOverlay(""), 2000);
       return;
     }
     const lines = [
-      "AUTOMATA ARCADE — NOTEBOOK",
+      "AUTOMATA ARCADE — JOURNAL",
       `Exported: ${new Date().toLocaleString()}`,
       `Entries: ${entries.length}`,
       "",
@@ -6585,7 +7145,7 @@
     }
     const text = lines.join("\n");
     navigator.clipboard.writeText(text).then(() => {
-      setOverlay("Notebook copied to clipboard.");
+      setOverlay("Journal copied to clipboard.");
       setTimeout(() => setOverlay(""), 2500);
     }).catch(() => {
       const w = window.open("", "_blank", "width=620,height=520");
@@ -6690,6 +7250,7 @@
     setupScriptKernel();
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
+    requestAnimationFrame(_syncTlBottom);
 
     loadDemo();
     requestAnimationFrame(runTick);
