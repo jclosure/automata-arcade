@@ -65,6 +65,7 @@
     },
     selectedPrefabId: null,
     draggingPrefabId: null,
+    _prefabStamp: null,  // { id, rotate, flipX } while in prefab stamp mode
     mode: "sandbox",
     score: 0,
     combo: 1,
@@ -1594,8 +1595,9 @@
   function placePrefab(id, gx, gy, opts = {}) {
     const prefab = getPrefabById(id);
     if (!prefab) return;
-    const rotate = opts.rotate ?? Number(rotateSelect.value);
-    const flipX = opts.flipX ?? flipXInput.checked;
+    const stamp = state._prefabStamp?.id === id ? state._prefabStamp : null;
+    const rotate = opts.rotate ?? stamp?.rotate ?? 0;
+    const flipX  = opts.flipX  ?? stamp?.flipX  ?? false;
     const cells = transformCells(prefab.cells, rotate, flipX);
     placeCells(cells, gx, gy);
   }
@@ -2230,8 +2232,9 @@
   function spherePlacePrefab(id, col, row, opts = {}) {
     const prefab = getPrefabById(id);
     if (!prefab) return;
-    const rotate = opts.rotate ?? Number(rotateSelect.value);
-    const flipX = opts.flipX ?? flipXInput.checked;
+    const stamp = state._prefabStamp?.id === id ? state._prefabStamp : null;
+    const rotate = opts.rotate ?? stamp?.rotate ?? 0;
+    const flipX  = opts.flipX  ?? stamp?.flipX  ?? false;
     spherePlaceCells(transformCells(prefab.cells, rotate, flipX), col, row);
   }
 
@@ -2252,7 +2255,8 @@
       return;
     }
 
-    const cells = transformCells(prefab.cells, Number(rotateSelect.value), flipXInput.checked);
+    const stamp = state._prefabStamp?.id === prefabId ? state._prefabStamp : null;
+    const cells = transformCells(prefab.cells, stamp?.rotate ?? 0, stamp?.flipX ?? false);
     const R = 5.022;
     const PAD = 0.08;
     const verts = [];
@@ -2452,7 +2456,8 @@
       const cell = hitCell3D(e.clientX, e.clientY);
       state.sphereHoverCell = null;
       if (!id || !cell) return;
-      spherePlacePrefab(id, cell.col, cell.row);
+      const stamp = state._prefabStamp?.id === id ? state._prefabStamp : null;
+      spherePlacePrefab(id, cell.col, cell.row, { rotate: stamp?.rotate ?? 0, flipX: stamp?.flipX ?? false });
       state.selectedPrefabId = id;
       refreshPaletteSelection();
       const prefab = getPrefabById(id);
@@ -2539,7 +2544,8 @@
     if (!hover || !prefabId) { mT.hoverMesh.geometry = new THREE.BufferGeometry(); return; }
     const prefab = getPrefabById(prefabId);
     if (!prefab) { mT.hoverMesh.geometry = new THREE.BufferGeometry(); return; }
-    const cells = transformCells(prefab.cells, Number(rotateSelect.value), flipXInput.checked);
+    const stampM = state._prefabStamp?.id === prefabId ? state._prefabStamp : null;
+    const cells = transformCells(prefab.cells, stampM?.rotate ?? 0, stampM?.flipX ?? false);
     const verts = [], idx = [];
     let vi = 0;
     for (const [dx, dy] of cells) {
@@ -2821,15 +2827,91 @@
     ctx.lineWidth = 2;
     ctx.strokeRect(p.x, p.y, state.zoom, state.zoom);
 
-    if (!state.draggingPrefabId) return;
-    const prefab = getPrefabById(state.draggingPrefabId);
+    // Ghost preview: stamp mode takes priority over drag
+    const stamp = state._prefabStamp;
+    const dragId = state.draggingPrefabId;
+    const ghostId = stamp?.id ?? dragId;
+    if (!ghostId) return;
+
+    const prefab = getPrefabById(ghostId);
     if (!prefab) return;
-    const transformed = transformCells(prefab.cells, Number(rotateSelect.value), flipXInput.checked);
-    ctx.fillStyle = "rgba(242,184,75,0.45)";
+
+    const rotate = stamp?.rotate ?? 0;
+    const flipX  = stamp?.flipX  ?? false;
+    const transformed = transformCells(prefab.cells, rotate, flipX);
+
+    ctx.fillStyle = "rgba(91,224,188,0.35)";
+    ctx.strokeStyle = "rgba(91,224,188,0.7)";
+    ctx.lineWidth = 1;
+    let minSX = Infinity, minSY = Infinity, maxSX = -Infinity, maxSY = -Infinity;
     for (const [dx, dy] of transformed) {
       const q = worldToScreen(state.hoverCell.x + dx, state.hoverCell.y + dy);
       ctx.fillRect(q.x + 1, q.y + 1, state.zoom - 2, state.zoom - 2);
+      ctx.strokeRect(q.x + 0.5, q.y + 0.5, state.zoom - 1, state.zoom - 1);
+      if (q.x < minSX) minSX = q.x;
+      if (q.y < minSY) minSY = q.y;
+      if (q.x + state.zoom > maxSX) maxSX = q.x + state.zoom;
+      if (q.y + state.zoom > maxSY) maxSY = q.y + state.zoom;
     }
+
+    // Transform badge above the pattern
+    if (stamp && (rotate !== 0 || flipX)) {
+      const label = [rotate ? `↻${rotate}°` : "", flipX ? "↔" : ""].filter(Boolean).join(" ");
+      ctx.save();
+      ctx.font = "bold 11px monospace";
+      const tw = ctx.measureText(label).width;
+      const bx = minSX + (maxSX - minSX) / 2 - tw / 2 - 4;
+      const by = minSY - 18;
+      ctx.fillStyle = "rgba(7,18,26,0.78)";
+      ctx.fillRect(bx, by, tw + 8, 16);
+      ctx.fillStyle = "#5be0bc";
+      ctx.fillText(label, bx + 4, by + 12);
+      ctx.restore();
+    }
+  }
+
+  function drawStampHint() {
+    if (state.canvasMode !== "prefab" || !state._prefabStamp) return;
+    const prefab = getPrefabById(state._prefabStamp.id);
+    const name = prefab?.name ?? "";
+    const rot = state._prefabStamp.rotate;
+    const flp = state._prefabStamp.flipX;
+    const transformPart = [rot ? `↻${rot}°` : "", flp ? "↔" : ""].filter(Boolean).join(" ");
+    const label = `Stamp: ${name}${transformPart ? "  " + transformPart : ""}   R rotate · F flip · Esc cancel`;
+    const cw = canvas.clientWidth;
+    const tlBar = document.getElementById("timelineBar");
+    const canvasRect = canvas.getBoundingClientRect();
+    const tlRect = tlBar?.getBoundingClientRect();
+    const hintBottom = tlRect ? (tlRect.top - canvasRect.top) : canvas.clientHeight;
+    ctx.save();
+    ctx.fillStyle = "rgba(7,18,26,0.82)";
+    ctx.fillRect(0, hintBottom - 26, cw, 26);
+    ctx.font = "11px 'Trebuchet MS', monospace";
+    ctx.fillStyle = "#9dc5d2";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, cw / 2, hintBottom - 13);
+    ctx.restore();
+  }
+
+  function drawSelectionHint() {
+    const sel = state.selection;
+    if (state.canvasMode !== "select" || !sel || sel.w <= 0 || sel.h <= 0) return;
+    const label = `${sel.w} × ${sel.h}   R rotate · F flip · Del delete · drag to move`;
+    const cw = canvas.clientWidth;
+    const tlBar = document.getElementById("timelineBar");
+    const canvasRect = canvas.getBoundingClientRect();
+    const tlRect = tlBar?.getBoundingClientRect();
+    const hintBottom = tlRect ? (tlRect.top - canvasRect.top) : canvas.clientHeight;
+    ctx.save();
+    ctx.fillStyle = "rgba(7,18,26,0.82)";
+    ctx.fillRect(0, hintBottom - 26, cw, 26);
+    ctx.font = "11px 'Trebuchet MS', monospace";
+    ctx.fillStyle = "#9dc5d2";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, cw / 2, hintBottom - 13);
+    ctx.restore();
   }
 
   function drawManifoldBorder() {
@@ -3149,6 +3231,8 @@
     drawNotebookPins();
     drawHover();
     drawLenses();
+    drawStampHint();
+    drawSelectionHint();
     for (const fn of _kernel.hooks.afterDraw) { ctx.save(); try { fn(); } catch (_) {} ctx.restore(); }
   }
 
@@ -3341,9 +3425,11 @@
       state._selMoveDelta = { dx: 0, dy: 0 };
     }
 
+    if (mode !== "prefab") state._prefabStamp = null;
+
     state.canvasMode = mode;
 
-    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell", object: "default" };
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell", object: "default", prefab: "crosshair" };
     canvas.style.cursor = cursors[mode] || "default";
     if (mode !== "zone")  { state._zoneDrawing = null; state._zoneDragMode = null; }
     if (mode !== "force") { state._ffDrawing = null; state._ffDragMode = null; }
@@ -3540,6 +3626,15 @@
       }
     }
 
+    // Prefab stamp mode: click to place, stay in mode for multi-stamp
+    if (state.canvasMode === "prefab" && ev.button === 0 && state._prefabStamp) {
+      const { id, rotate, flipX } = state._prefabStamp;
+      placePrefab(id, Math.floor(gxgy.x), Math.floor(gxgy.y), { rotate, flipX });
+      if (state.mode === "arcade") state.score = Math.max(0, state.score - 8);
+      snapshotNow(); draw();
+      ev.preventDefault(); return;
+    }
+
     if (state.canvasMode === "move") {
       state.pointer.mode = "pan";
       canvas.style.cursor = "grabbing";
@@ -3557,18 +3652,25 @@
         state.pointer.mode = "move";
         state._selMoveOriginCell = { x: cx, y: cy };
         state._selMoveDelta = { dx: 0, dy: 0 };
-        const cells = [];
-        const alive = activeAlive();
-        for (const k of alive) {
-          const [col, row] = parseKey(k);
-          if (col >= sel.x && col < sel.x + sel.w && row >= sel.y && row < sel.y + sel.h)
-            cells.push([col - sel.x, row - sel.y]);
+        if (!state._selMoving) {
+          // Lift cells from the board (only if not already lifted, e.g. after R/F)
+          const cells = [];
+          const alive = activeAlive();
+          for (const k of alive) {
+            const [col, row] = parseKey(k);
+            if (col >= sel.x && col < sel.x + sel.w && row >= sel.y && row < sel.y + sel.h)
+              cells.push([col - sel.x, row - sel.y]);
+          }
+          for (const [ox, oy] of cells) alive.delete(key(sel.x + ox, sel.y + oy));
+          state._selCells = cells;
+          state._selMoving = true;
         }
-        for (const [ox, oy] of cells) alive.delete(key(sel.x + ox, sel.y + oy));
-        state._selCells = cells;
-        state._selMoving = true;
       } else {
-        // Not on the selection — check for cross-type object pick
+        // Not on the selection — commit any lifted cells before starting fresh
+        if (state._selMoving && state._selCells) {
+          for (const [ox, oy] of state._selCells)
+            setCell(sel.x + ox, sel.y + oy, true);
+        }
         const sxS = ev.clientX - rect.left, syS = ev.clientY - rect.top;
         const cHS = _anyObjectHitTest(sxS, syS);
         if (cHS) { _applyCrossTypeHit(cHS, sxS, syS); ev.preventDefault(); return; }
@@ -4044,7 +4146,6 @@
   function makePaletteCard(prefab, isCustom) {
     const card = document.createElement("article");
     card.className = "palette-card";
-    card.draggable = true;
     card.dataset.prefabId = prefab.id;
     card.innerHTML = `
       <div class="palette-card-head">
@@ -4060,17 +4161,88 @@
         deleteCustomPrefab(prefab.id);
       });
     }
-    card.addEventListener("click", () => {
+
+    card.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      card.setPointerCapture(ev.pointerId);
+
+      // Select card and enter stamp mode immediately
       state.selectedPrefabId = prefab.id;
       refreshPaletteSelection();
       renderInspector(prefab);
+      const prev = state._prefabStamp;
+      state._prefabStamp = {
+        id: prefab.id,
+        rotate: (prev?.id === prefab.id ? prev.rotate : 0),
+        flipX:  (prev?.id === prefab.id ? prev.flipX  : false),
+      };
+      setCanvasMode("prefab");
+      draw();
+
+      let dragging = false;
+      const startX = ev.clientX, startY = ev.clientY;
+
+      const onMove = (me) => {
+        if (!dragging) {
+          if (Math.hypot(me.clientX - startX, me.clientY - startY) > 6) {
+            dragging = true;
+            state.draggingPrefabId = prefab.id;
+          }
+        }
+        if (!dragging) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const cx = me.clientX - canvasRect.left, cy = me.clientY - canvasRect.top;
+        if (!is3DMode() && cx >= 0 && cy >= 0 && cx <= canvasRect.width && cy <= canvasRect.height) {
+          state.hoverCell = screenToGrid(cx, cy);
+        } else {
+          state.hoverCell = null;
+          if (state.mode === "sphere" && sphereThree) {
+            state.sphereHoverCell = hitCell3D(me.clientX, me.clientY);
+          }
+        }
+        draw();
+        if (state.mode === "sphere" && sphereThree) renderSphere();
+      };
+
+      const onUp = (ue) => {
+        card.removeEventListener("pointermove", onMove);
+        card.removeEventListener("pointerup", onUp);
+        card.removeEventListener("pointercancel", onUp);
+        if (dragging && state._prefabStamp) {
+          const { id, rotate, flipX } = state._prefabStamp;
+          const canvasRect = canvas.getBoundingClientRect();
+          const cx = ue.clientX - canvasRect.left, cy = ue.clientY - canvasRect.top;
+          if (!is3DMode() && cx >= 0 && cy >= 0 && cx <= canvasRect.width && cy <= canvasRect.height) {
+            const target = screenToGrid(cx, cy);
+            placePrefab(id, Math.floor(target.x), Math.floor(target.y), { rotate, flipX });
+            state.selectedPrefabId = id;
+            refreshPaletteSelection();
+            const pf = getPrefabById(id);
+            if (pf) renderInspector(pf);
+            if (state.mode === "arcade") state.score = Math.max(0, state.score - 8);
+            snapshotNow();
+          } else if (state.mode === "sphere" && sphereThree) {
+            const cell = hitCell3D(ue.clientX, ue.clientY);
+            if (cell) {
+              spherePlacePrefab(id, cell.col, cell.row, { rotate, flipX });
+              state.selectedPrefabId = id;
+              refreshPaletteSelection();
+              const pf = getPrefabById(id);
+              if (pf) renderInspector(pf);
+              state.sphereHoverCell = null;
+            }
+          }
+        }
+        state.draggingPrefabId = null;
+        draw();
+      };
+
+      card.addEventListener("pointermove", onMove);
+      card.addEventListener("pointerup", onUp);
+      card.addEventListener("pointercancel", onUp);
     });
-    card.addEventListener("dragstart", (ev) => {
-      state.draggingPrefabId = prefab.id;
-      ev.dataTransfer.setData("text/plain", prefab.id);
-      ev.dataTransfer.effectAllowed = "copy";
-    });
-    card.addEventListener("dragend", () => { state.draggingPrefabId = null; });
+
     return card;
   }
 
@@ -4189,12 +4361,6 @@
       updateHud();
     });
 
-    rotateSelect.addEventListener("change", () => {
-      draw();
-    });
-    flipXInput.addEventListener("change", () => {
-      draw();
-    });
     sharedStateInput.addEventListener("change", () => {
       state.sharedState = sharedStateInput.checked;
       updateHud();
@@ -4227,29 +4393,46 @@
     canvas.addEventListener("pointercancel", handlePointerUp);
     canvas.addEventListener("wheel", handleWheel, { passive: false });
 
-    canvas.addEventListener("dragover", (ev) => {
-      ev.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      state.hoverCell = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
-      ev.dataTransfer.dropEffect = "copy";
-    });
+  }
 
-    canvas.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      const id = ev.dataTransfer.getData("text/plain") || state.draggingPrefabId;
-      if (!id) return;
-      const rect = canvas.getBoundingClientRect();
-      const target = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
-      placePrefab(id, target.x, target.y);
-      state.selectedPrefabId = id;
-      refreshPaletteSelection();
-      const prefab = getPrefabById(id);
-      if (prefab) renderInspector(prefab);
-      state.draggingPrefabId = null;
-      if (state.mode === "arcade") {
-        state.score = Math.max(0, state.score - 8);
+  function transformSelection(rotateDeg, doFlipX = false) {
+    const sel = state.selection;
+    if (!sel || sel.w <= 0 || sel.h <= 0) return;
+
+    // Commit any pending translation into sel.x/y first
+    if (state._selMoving && (state._selMoveDelta.dx !== 0 || state._selMoveDelta.dy !== 0)) {
+      sel.x += state._selMoveDelta.dx;
+      sel.y += state._selMoveDelta.dy;
+      state._selMoveDelta = { dx: 0, dy: 0 };
+    }
+
+    // Lift cells from the board if not already lifted
+    if (!state._selMoving) {
+      const cells = [];
+      const alive = activeAlive();
+      for (const k of alive) {
+        const [col, row] = parseKey(k);
+        if (col >= sel.x && col < sel.x + sel.w && row >= sel.y && row < sel.y + sel.h)
+          cells.push([col - sel.x, row - sel.y]);
       }
-    });
+      for (const [ox, oy] of cells) alive.delete(key(sel.x + ox, sel.y + oy));
+      state._selCells = cells;
+      state._selMoving = true;
+      state._selMoveDelta = { dx: 0, dy: 0 };
+    }
+
+    const w = sel.w, h = sel.h;
+    const cells = state._selCells || [];
+
+    if (doFlipX) {
+      // Mirror horizontally within the box — box stays W×H
+      state._selCells = cells.map(([ox, oy]) => [w - 1 - ox, oy]);
+    } else {
+      // 90° CW rotation within the box: [ox,oy] → [H-1-oy, ox], box becomes H×W
+      state._selCells = cells.map(([ox, oy]) => [h - 1 - oy, ox]);
+      sel.w = h;
+      sel.h = w;
+    }
   }
 
   function setupShortcuts() {
@@ -4346,13 +4529,18 @@
         snapshotNow();
       } else if (ev.key.toLowerCase() === "d") {
         loadDemo();
-      } else if (ev.key.toLowerCase() === "r") {
-        const values = [0, 90, 180, 270];
-        const current = Number(rotateSelect.value);
-        const idx = (values.indexOf(current) + 1) % values.length;
-        rotateSelect.value = String(values[idx]);
-      } else if (ev.key.toLowerCase() === "f") {
-        flipXInput.checked = !flipXInput.checked;
+      } else if (ev.key.toLowerCase() === "r" && state.canvasMode === "prefab" && state._prefabStamp) {
+        state._prefabStamp.rotate = (state._prefabStamp.rotate + 90) % 360;
+        draw();
+      } else if (ev.key.toLowerCase() === "r" && state.canvasMode === "select" && hasSel) {
+        transformSelection(90);
+        draw();
+      } else if (ev.key.toLowerCase() === "f" && state.canvasMode === "prefab" && state._prefabStamp) {
+        state._prefabStamp.flipX = !state._prefabStamp.flipX;
+        draw();
+      } else if (ev.key.toLowerCase() === "f" && state.canvasMode === "select" && hasSel) {
+        transformSelection(0, true);
+        draw();
       } else if (ev.key.toLowerCase() === "g") {
         state.showGrid = !state.showGrid;
       } else if (ev.key === "1") {
@@ -4391,7 +4579,10 @@
         _toggleScriptPanel();
         ev.preventDefault();
       } else if (ev.key === "Escape") {
-        if (state.canvasMode === "object") {
+        if (state.canvasMode === "prefab") {
+          setCanvasMode("paint"); // clears _prefabStamp via setCanvasMode
+          draw();
+        } else if (state.canvasMode === "object") {
           const prev = state._prevCanvasMode || "paint";
           state._prevCanvasMode = null;
           setCanvasMode(prev);

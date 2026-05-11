@@ -54,16 +54,6 @@
             <button class="mode-btn" data-mode="lens" title="Lens (L)">🔍 Lens</button>
           </div>
           <span class="tb-sep"></span>
-          <label class="tb-check">Rotate
-            <select id="rotateSelect">
-              <option value="0">0°</option>
-              <option value="90">90°</option>
-              <option value="180">180°</option>
-              <option value="270">270°</option>
-            </select>
-          </label>
-          <label class="tb-check"><input type="checkbox" id="flipX" /> Flip X</label>
-          <span class="tb-sep"></span>
           <div class="objective" id="objectiveText">Sandbox: draw, drop, and experiment.</div>
         </div>
       </header>
@@ -473,15 +463,15 @@
                     <li><kbd>B</kbd> Step backward</li>
                     <li><kbd>C</kbd> Clear board</li>
                     <li><kbd>D</kbd> Load demo</li>
-                    <li><kbd>R</kbd> Rotate 90°</li>
-                    <li><kbd>F</kbd> Flip X</li>
                     <li><kbd>G</kbd> Toggle grid</li>
                     <li><kbd>P</kbd> Paint mode</li>
                     <li><kbd>M</kbd> Move/pan mode</li>
                     <li><kbd>S</kbd> Select mode</li>
                     <li><kbd>V</kbd> Force-paint mode</li>
                     <li><kbd>L</kbd> Lens mode</li>
-                    <li><kbd>Esc</kbd> Back to paint mode</li>
+                    <li><kbd>Esc</kbd> Back to paint / cancel stamp</li>
+                    <li><kbd>R</kbd> Rotate 90° <em>(stamp or select mode)</em></li>
+                    <li><kbd>F</kbd> Flip horizontally <em>(stamp or select mode)</em></li>
                     <li><kbd>X</kbd> Toggle paint type A/B</li>
                     <li><kbd>Del</kbd> Delete selection</li>
                     <li><kbd>Ctrl+C</kbd> Copy selection</li>
