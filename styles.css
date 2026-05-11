@@ -269,6 +269,113 @@ button:hover {
 .obj-hud:empty { display: none; }
 .obj-hud.obj-hud-hidden { opacity: 0; pointer-events: none; }
 
+/* ── Shape picker ────────────────────────────────────────────────────────── */
+.shape-picker {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 8px 8px;
+  background: rgba(7, 17, 28, 0.97);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--accent-2);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(91,224,188,0.08) inset;
+  min-width: 130px;
+  outline: none;
+}
+.sp-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+  padding: 0 2px;
+}
+.sp-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  text-align: left;
+}
+.sp-btn:hover {
+  background: rgba(91,224,188,0.12);
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+.sp-btn span { font-size: 10px; color: var(--muted); }
+.sp-btn:hover span { color: var(--accent-2); }
+.sp-cancel {
+  margin-top: 2px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+.sp-cancel:hover { border-color: var(--ink); color: var(--ink); }
+
+/* ── Manifold Region inspector list ─────────────────────────────────────── */
+.mr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+.mr-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+  font-size: 10px;
+}
+.mr-row:hover { border-color: var(--accent-2); background: rgba(91,224,188,0.05); }
+.mr-row-sel { border-color: var(--accent-2) !important; background: rgba(91,224,188,0.08) !important; }
+.mr-icon { font-size: 13px; flex-shrink: 0; }
+.mr-name { flex: 1; color: var(--ink); }
+.mr-dim { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.mr-proto {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+.mr-proto:hover { border-color: var(--accent-2); color: var(--accent-2); }
+.mr-del {
+  padding: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+.mr-del:hover { color: #ff6b6b; background: rgba(255,107,107,0.1); }
+
 /* Hint reveal drawer tab (appears at top-center when hint is dismissed) */
 .hint-reveal {
   position: absolute;

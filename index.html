@@ -60,7 +60,8 @@
               <button class="mode-btn" data-mode="move"   title="Move / Pan  M">✥</button>
               <button class="mode-btn" data-mode="select" title="Select  S">⬚</button>
               <button class="mode-btn" data-mode="force"  title="Force Paint  V">⊛</button>
-              <button class="mode-btn" data-mode="lens"   title="Lens  L">🔍</button>
+              <button class="mode-btn" data-mode="lens"     title="Lens  L">🔍</button>
+              <button class="mode-btn" data-mode="manifold" title="Manifold Region  T">⬡</button>
               <div class="tp-divider"></div>
               <button id="tpCollapse" class="tp-collapse-btn" title="Hide palette  ` ">‹</button>
             </div>
@@ -69,6 +70,18 @@
             <!-- Mode / objective hint pill + reveal tab -->
             <div id="objectiveText" class="obj-hud"></div>
             <button id="hintReveal" class="hint-reveal" title="Show hint  H">?</button>
+
+            <!-- Shape picker (appears after manifold region drag) -->
+            <div id="shapePicker" class="shape-picker" style="display:none" tabindex="-1">
+              <div class="sp-title">Choose topology</div>
+              <button class="sp-btn" data-shape="torus">⬭<span>Torus</span></button>
+              <button class="sp-btn" data-shape="sphere">●<span>Sphere</span></button>
+              <button class="sp-btn" data-shape="cylinder">⌭<span>Cylinder</span></button>
+              <button class="sp-btn" data-shape="mobius">∞<span>Möbius</span></button>
+              <button class="sp-btn" data-shape="klein">⧖<span>Klein</span></button>
+              <button class="sp-btn" data-shape="rp2">ℙ<span>RP²</span></button>
+              <button id="shapePickerCancel" class="sp-cancel">Cancel</button>
+            </div>
 
             <div id="overlayMessage" class="overlay hidden"></div>
             <div id="timelineBar" class="tl-bar">
@@ -145,6 +158,12 @@
               <!-- ── Inspector tab (default) ─────────────────── -->
               <div class="stab-panel" id="stabInspector">
                 <div class="stab-header">🔬 Inspector</div>
+
+                <!-- Manifold Regions section — hidden when no regions exist -->
+                <div id="manifoldSection" style="display:none">
+                  <h3 class="lab-heading">⬡ Manifold Regions</h3>
+                  <div id="manifoldRegionList" class="mr-list"></div>
+                </div>
 
                 <h3 class="lab-heading">Rule Lab</h3>
                 <div id="ruleLab">
@@ -461,6 +480,21 @@
                     <li><kbd>0 0</kbd> Clear cell output</li>
                     <li><kbd>Escape</kbd> Exit command mode</li>
                   </ul>
+                  <h3 class="lab-heading" style="margin-top:12px">Manifold Engine</h3>
+                  <div class="rl-row" style="margin-bottom:4px">
+                    <span style="font-size:10px;color:var(--muted)">Overlap protocol</span>
+                    <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:3px">
+                      <input type="radio" name="manifoldOverlap" id="manifoldOverlapA" value="A" checked /> Last wins
+                    </label>
+                    <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:3px">
+                      <input type="radio" name="manifoldOverlap" id="manifoldOverlapB" value="B" /> Compose
+                    </label>
+                  </div>
+                  <div class="rl-row" style="margin-bottom:4px">
+                    <label class="rl-check"><input type="checkbox" id="manifoldKernelInherit" checked /> Inherit flat kernel</label>
+                  </div>
+                  <p style="font-size:10px;color:var(--muted);margin:2px 0 6px">Press <kbd>T</kbd> to activate the manifold tool, then drag a rect on the board.</p>
+
                   <h3 class="lab-heading" style="margin-top:12px">Hints</h3>
                   <div class="rl-row" style="margin-bottom:4px">
                     <label class="rl-check"><input type="checkbox" id="showHints" checked /> Show hints</label>
@@ -499,6 +533,7 @@
                     <li><kbd>1–7</kbd> Mode presets</li>
                     <li><kbd>`</kbd> Toggle tool palette</li>
                     <li><kbd>H</kbd> Toggle hint</li>
+                    <li><kbd>T</kbd> Manifold region tool</li>
                   </ul>
                 </div>
               </div>
@@ -665,6 +700,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
     <script src="lib/codemirror/codemirror.min.js"></script>
     <script src="lib/codemirror/javascript.min.js"></script>
+    <script src="lib/manifold.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -90,6 +90,12 @@
     trailDecay: 0.88,
     showHints: true,
     hintDuration: 10,
+    manifoldRegions: [],
+    manifoldOverlapProtocol: 'A',  // 'A' = last-wins, 'B' = compose (non-commutative)
+    manifoldKernelInherit: true,
+    _manifoldIdSeq: 0,
+    _manifoldSelected: null,       // id of selected region
+    _manifoldDrag: null,           // {x0,y0,x1,y1} while dragging a new region rect
     repulseEnabled: false,
     repulseAge: 20,
     repulseStrength: 1,
@@ -1758,6 +1764,81 @@
     return offsets;
   }
 
+  // ─── Manifold Region Engine integration ───────────────────────────────────
+
+  const { ManifoldRegion: MRegion } = window.ManifoldEngine;
+
+  function _manifoldKernelWeights() {
+    // Convert flat kernel offsets to [dx, dy, weight] triples (weight=1 for binary kernels)
+    return getKernelOffsets().map(([dx, dy]) => [dx, dy, 1.0]);
+  }
+
+  function createManifoldRegion(rect, shape, protocol = 'A') {
+    const id = ++state._manifoldIdSeq;
+    const region = new MRegion({ id, rect, shape, boundaryProtocol: protocol });
+    region.build(_manifoldKernelWeights());
+    state.manifoldRegions.push(region);
+    return region;
+  }
+
+  function removeManifoldRegion(id) {
+    const idx = state.manifoldRegions.findIndex(r => r.id === id);
+    if (idx !== -1) state.manifoldRegions.splice(idx, 1);
+    if (state._manifoldSelected === id) state._manifoldSelected = null;
+    manifoldInspectorSync();
+  }
+
+  function rebuildAllManifoldRegions() {
+    const weights = _manifoldKernelWeights();
+    for (const r of state.manifoldRegions) {
+      if (state.manifoldKernelInherit || !r.kernelOverride) r.build(weights);
+    }
+  }
+
+  function getRegionsContaining(cx, cy) {
+    // Returns regions in stack order (insertion order = stack order for non-commutative compose)
+    const out = [];
+    for (const r of state.manifoldRegions) {
+      if (r.containsCell(cx, cy)) out.push(r);
+    }
+    return out;
+  }
+
+  function getManifoldNeighborWeights(cx, cy) {
+    // Returns [{key, weight}] array or null (null → use default flat kernel)
+    const regions = getRegionsContaining(cx, cy);
+    if (regions.length === 0) return null;
+
+    if (state.manifoldOverlapProtocol === 'A' || regions.length === 1) {
+      // Last wins: highest-index region in the array
+      return regions[regions.length - 1].neighborWeightMap.get(key(cx, cy)) ?? null;
+    }
+
+    // Protocol B — compose in stack order (non-commutative)
+    return _composeNeighborWeights(cx, cy, regions);
+  }
+
+  function _composeNeighborWeights(cx, cy, regions) {
+    // Start with innermost (first) region's neighbors, then remap through outer regions
+    let neighbors = regions[0].neighborWeightMap.get(key(cx, cy));
+    if (!neighbors) return null;
+
+    for (let i = 1; i < regions.length; i++) {
+      const outer = regions[i];
+      neighbors = neighbors.map(({ key: nk, weight }) => {
+        const [nx, ny] = parseKey(nk);
+        const remapped = outer.neighborWeightMap.get(nk);
+        if (remapped && outer.containsCell(nx, ny)) {
+          // Cell lands inside outer region — apply outer topology too
+          // Use same weight (composition preserves the inner weight)
+          return remapped.map(r2 => ({ key: r2.key, weight: weight * r2.weight }));
+        }
+        return [{ key: nk, weight }];
+      }).flat();
+    }
+    return neighbors;
+  }
+
   const MAX_CELLS_CONTIG = 4000;
 
   function findComponents(aliveSet, minSize) {
@@ -1871,11 +1952,18 @@
 
     // Convolve: each live cell broadcasts its value to neighbors
     const neighborSums = new Map();
+    const hasManifolds_l = state.manifoldRegions.length > 0;
     for (const [k, v] of valueMap) {
       const [c, r] = parseKey(k);
-      for (const [dc, dr] of offsets) {
-        const nk = surface.cellKey(c + dc, r + dr);
-        if (nk) neighborSums.set(nk, (neighborSums.get(nk) || 0) + v);
+      const mNeighbors = hasManifolds_l ? getManifoldNeighborWeights(c, r) : null;
+      if (mNeighbors) {
+        for (const { key: nk, weight } of mNeighbors)
+          neighborSums.set(nk, (neighborSums.get(nk) || 0) + v * weight);
+      } else {
+        for (const [dc, dr] of offsets) {
+          const nk = surface.cellKey(c + dc, r + dr);
+          if (nk) neighborSums.set(nk, (neighborSums.get(nk) || 0) + v);
+        }
       }
     }
     // Ensure every existing cell is in the sum map (even if neighbors didn't reach it)
@@ -1951,12 +2039,20 @@
     const repulse = state.repulseEnabled;
     const repulseAge = state.repulseAge;
     const repulseStrength = state.repulseStrength;
+    const hasManifolds = state.manifoldRegions.length > 0;
+
     for (const k of alive) {
       const [c, r] = parseKey(k);
       const w = (repulse && (cellAgeMap.get(k) ?? 0) >= repulseAge) ? -repulseStrength : 1;
-      for (const [dc, dr] of offsets) {
-        const nk = surface.cellKey(c + dc, r + dr);
-        if (nk !== null) neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + w);
+      const mNeighbors = hasManifolds ? getManifoldNeighborWeights(c, r) : null;
+      if (mNeighbors) {
+        for (const { key: nk, weight } of mNeighbors)
+          neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + w * weight);
+      } else {
+        for (const [dc, dr] of offsets) {
+          const nk = surface.cellKey(c + dc, r + dr);
+          if (nk !== null) neighborCounts.set(nk, (neighborCounts.get(nk) || 0) + w);
+        }
       }
     }
 
@@ -1972,11 +2068,19 @@
         const [c, r] = parseKey(k);
         const isA = (typeMap.get(k) ?? 0) === 0;
         const w = (repulse && (cellAgeMap.get(k) ?? 0) >= repulseAge) ? -repulseStrength : 1;
-        for (const [dc, dr] of offsets) {
-          const nk = surface.cellKey(c + dc, r + dr);
-          if (nk === null) continue;
-          if (isA) countsA.set(nk, (countsA.get(nk) || 0) + w);
-          else countsB.set(nk, (countsB.get(nk) || 0) + w);
+        const mNeighbors = hasManifolds ? getManifoldNeighborWeights(c, r) : null;
+        if (mNeighbors) {
+          for (const { key: nk, weight } of mNeighbors) {
+            if (isA) countsA.set(nk, (countsA.get(nk) || 0) + w * weight);
+            else countsB.set(nk, (countsB.get(nk) || 0) + w * weight);
+          }
+        } else {
+          for (const [dc, dr] of offsets) {
+            const nk = surface.cellKey(c + dc, r + dr);
+            if (nk === null) continue;
+            if (isA) countsA.set(nk, (countsA.get(nk) || 0) + w);
+            else countsB.set(nk, (countsB.get(nk) || 0) + w);
+          }
         }
       }
       // Evaluate per-cell survival/birth using each type's own rules
@@ -2918,32 +3022,96 @@
 
   function drawManifoldBorder() {
     if (is3DMode()) return;
+    // Legacy global surface border
     const surface = activeSurface();
-    if (surface === SURFACES.flat) return;
-    const tl = worldToScreen(0, 0);
-    const br = worldToScreen(SPHERE_COLS, SPHERE_ROWS);
-    const w = br.x - tl.x, h = br.y - tl.y;
+    if (surface !== SURFACES.flat) {
+      const tl = worldToScreen(0, 0);
+      const br = worldToScreen(SPHERE_COLS, SPHERE_ROWS);
+      const w = br.x - tl.x, h = br.y - tl.y;
+      ctx.save();
+      ctx.strokeStyle = "rgba(91,224,188,0.22)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(tl.x, tl.y, w, h);
+      ctx.setLineDash([]);
+      const mid = { x: tl.x + w / 2, y: tl.y + h / 2 };
+      ctx.strokeStyle = "rgba(91,224,188,0.45)";
+      ctx.lineWidth = 1.5;
+      const t = 8;
+      ctx.beginPath(); ctx.moveTo(mid.x - t, tl.y); ctx.lineTo(mid.x + t, tl.y); ctx.stroke();
+      const flipY = surface === SURFACES.klein || surface === SURFACES.mobius;
+      ctx.beginPath(); ctx.moveTo(mid.x + (flipY ? t : -t), br.y); ctx.lineTo(mid.x + (flipY ? -t : t), br.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tl.x, mid.y - t); ctx.lineTo(tl.x, mid.y + t); ctx.stroke();
+      const flipX = surface === SURFACES.rp2;
+      ctx.beginPath(); ctx.moveTo(br.x, mid.y + (flipX ? t : -t)); ctx.lineTo(br.x, mid.y + (flipX ? -t : t)); ctx.stroke();
+      ctx.restore();
+    }
+
+    // Draw manifold region overlays
+    if (state.manifoldRegions.length === 0 && !state._manifoldDrag) return;
     ctx.save();
-    ctx.strokeStyle = "rgba(91,224,188,0.22)";
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(tl.x, tl.y, w, h);
-    ctx.setLineDash([]);
-    // Tick marks to hint at identification direction
-    const mid = { x: tl.x + w / 2, y: tl.y + h / 2 };
-    ctx.strokeStyle = "rgba(91,224,188,0.45)";
-    ctx.lineWidth = 1.5;
-    const t = 8; // tick half-length
-    // Top edge arrow (→)
-    ctx.beginPath(); ctx.moveTo(mid.x - t, tl.y); ctx.lineTo(mid.x + t, tl.y); ctx.stroke();
-    // Bottom edge arrow: same direction for torus/cylinder, opposite for klein/mobius
-    const flipY = surface === SURFACES.klein || surface === SURFACES.mobius;
-    ctx.beginPath(); ctx.moveTo(mid.x + (flipY ? t : -t), br.y); ctx.lineTo(mid.x + (flipY ? -t : t), br.y); ctx.stroke();
-    // Left edge arrow (↓)
-    ctx.beginPath(); ctx.moveTo(tl.x, mid.y - t); ctx.lineTo(tl.x, mid.y + t); ctx.stroke();
-    // Right edge: same for torus/klein, opposite for rp2
-    const flipX = surface === SURFACES.rp2;
-    ctx.beginPath(); ctx.moveTo(br.x, mid.y + (flipX ? t : -t)); ctx.lineTo(br.x, mid.y + (flipX ? -t : t)); ctx.stroke();
+
+    const { SHAPE_META } = window.ManifoldEngine;
+
+    for (const region of state.manifoldRegions) {
+      const { x, y, w, h, shape } = { ...region.rect, shape: region.shape };
+      const tl = worldToScreen(x, y);
+      const sw = w * state.zoom, sh = h * state.zoom;
+      const selected = state._manifoldSelected === region.id;
+
+      // Tint fill
+      ctx.fillStyle = selected
+        ? 'rgba(91,224,188,0.08)'
+        : 'rgba(91,224,188,0.04)';
+      ctx.fillRect(tl.x, tl.y, sw, sh);
+
+      // Border
+      ctx.strokeStyle = selected ? 'rgba(91,224,188,0.9)' : 'rgba(91,224,188,0.45)';
+      ctx.lineWidth = selected ? 1.5 : 1;
+      ctx.setLineDash(selected ? [] : [4, 4]);
+      ctx.strokeRect(tl.x + 0.5, tl.y + 0.5, sw - 1, sh - 1);
+      ctx.setLineDash([]);
+
+      // Label (icon + id) at top-left if zoom large enough
+      if (state.zoom >= 4) {
+        const meta = SHAPE_META[shape] || {};
+        const label = `${meta.icon || '?'} ${shape} #${region.id}`;
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = 'rgba(91,224,188,0.85)';
+        ctx.fillText(label, tl.x + 4, tl.y + 12);
+      }
+
+      // Identification-direction tick marks on edges (like the global border)
+      const mid = { x: tl.x + sw / 2, y: tl.y + sh / 2 };
+      ctx.strokeStyle = 'rgba(91,224,188,0.55)';
+      ctx.lineWidth = 1.2;
+      const t = Math.min(7, sw / 4, sh / 4);
+      const flipY = shape === 'klein' || shape === 'mobius';
+      const flipX = shape === 'rp2';
+      // Top/bottom
+      ctx.beginPath(); ctx.moveTo(mid.x - t, tl.y); ctx.lineTo(mid.x + t, tl.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mid.x + (flipY ? t : -t), tl.y + sh); ctx.lineTo(mid.x + (flipY ? -t : t), tl.y + sh); ctx.stroke();
+      // Left/right (not for open-boundary cylinder/mobius y-axis)
+      if (shape !== 'cylinder') {
+        ctx.beginPath(); ctx.moveTo(tl.x, mid.y - t); ctx.lineTo(tl.x, mid.y + t); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(tl.x + sw, mid.y + (flipX ? t : -t)); ctx.lineTo(tl.x + sw, mid.y + (flipX ? -t : t)); ctx.stroke();
+      }
+    }
+
+    // Ghost while dragging a new region
+    if (state.canvasMode === 'manifold' && state._manifoldDrag) {
+      const d = state._manifoldDrag;
+      const tl2 = worldToScreen(Math.min(d.x0, d.x1), Math.min(d.y0, d.y1));
+      const br2 = worldToScreen(Math.max(d.x0, d.x1) + 1, Math.max(d.y0, d.y1) + 1);
+      ctx.strokeStyle = 'rgba(91,224,188,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(tl2.x, tl2.y, br2.x - tl2.x, br2.y - tl2.y);
+      ctx.fillStyle = 'rgba(91,224,188,0.05)';
+      ctx.fillRect(tl2.x, tl2.y, br2.x - tl2.x, br2.y - tl2.y);
+      ctx.setLineDash([]);
+    }
+
     ctx.restore();
   }
 
@@ -3424,6 +3592,85 @@
     }
   }
 
+  // ─── Shape picker ─────────────────────────────────────────────────────────
+
+  let _pendingManifoldRect = null;
+
+  function showShapePicker(sx, sy, rect) {
+    _pendingManifoldRect = rect;
+    const picker = document.getElementById('shapePicker');
+    if (!picker) return;
+    // Position near the mouse, nudge to keep inside board-wrap
+    const wrap = document.querySelector('.board-wrap');
+    const wRect = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 600 };
+    const canvasRect = canvas.getBoundingClientRect();
+    let px = (canvasRect.left - wRect.left) + sx + 12;
+    let py = (canvasRect.top  - wRect.top)  + sy + 12;
+    px = Math.min(px, wRect.width  - picker.offsetWidth  - 8);
+    py = Math.min(py, wRect.height - picker.offsetHeight - 8);
+    picker.style.left = px + 'px';
+    picker.style.top  = py + 'px';
+    picker.style.display = 'flex';
+    picker.focus();
+  }
+
+  function hideShapePicker() {
+    const picker = document.getElementById('shapePicker');
+    if (picker) picker.style.display = 'none';
+    _pendingManifoldRect = null;
+  }
+
+  function confirmShape(shape) {
+    if (!_pendingManifoldRect) return;
+    createManifoldRegion(_pendingManifoldRect, shape, 'A');
+    hideShapePicker();
+    manifoldInspectorSync();
+    draw();
+  }
+
+  // ─── Manifold inspector sync ───────────────────────────────────────────────
+
+  function manifoldInspectorSync() {
+    const list = document.getElementById('manifoldRegionList');
+    if (!list) return;
+    const { SHAPE_META } = window.ManifoldEngine;
+    list.innerHTML = '';
+    for (const region of state.manifoldRegions) {
+      const meta = SHAPE_META[region.shape] || {};
+      const row = document.createElement('div');
+      row.className = 'mr-row' + (state._manifoldSelected === region.id ? ' mr-row-sel' : '');
+      row.innerHTML = `
+        <span class="mr-icon">${meta.icon || '?'}</span>
+        <span class="mr-name">${meta.label || region.shape} #${region.id}</span>
+        <span class="mr-dim">${region.rect.w}×${region.rect.h}</span>
+        <button class="mr-proto" data-id="${region.id}" title="Boundary: ${region.boundaryProtocol === 'A' ? 'Closed' : 'Membrane'}">${region.boundaryProtocol}</button>
+        <button class="mr-del" data-id="${region.id}" title="Delete region">×</button>
+      `;
+      row.addEventListener('click', (e) => {
+        if (e.target.classList.contains('mr-del')) return;
+        if (e.target.classList.contains('mr-proto')) return;
+        state._manifoldSelected = region.id;
+        manifoldInspectorSync();
+        draw();
+      });
+      row.querySelector('.mr-proto').addEventListener('click', (e) => {
+        e.stopPropagation();
+        region.boundaryProtocol = region.boundaryProtocol === 'A' ? 'B' : 'A';
+        region.build(_manifoldKernelWeights());
+        manifoldInspectorSync();
+      });
+      row.querySelector('.mr-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeManifoldRegion(region.id);
+        draw();
+      });
+      list.appendChild(row);
+    }
+    // Show/hide the manifold section
+    const section = document.getElementById('manifoldSection');
+    if (section) section.style.display = state.manifoldRegions.length > 0 ? '' : 'none';
+  }
+
   function toggleToolPalette() {
     const palette = document.getElementById("toolPalette");
     const reveal  = document.getElementById("tpReveal");
@@ -3519,6 +3766,30 @@
     state.pointer.down = true;
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
+
+    // Manifold tool: drag to define region rect
+    if (state.canvasMode === 'manifold' && ev.button === 0) {
+      const rect = canvas.getBoundingClientRect();
+      const gxy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      const gx = Math.floor(gxy.x), gy = Math.floor(gxy.y);
+
+      // Click existing region → select it
+      let hit = null;
+      for (let i = state.manifoldRegions.length - 1; i >= 0; i--) {
+        const r = state.manifoldRegions[i];
+        if (r.containsCell(gx, gy)) { hit = r; break; }
+      }
+      if (hit) {
+        state._manifoldSelected = hit.id;
+        manifoldInspectorSync();
+        draw(); ev.preventDefault(); return;
+      }
+
+      // Start drawing new region
+      state._manifoldSelected = null;
+      state._manifoldDrag = { x0: gx, y0: gy, x1: gx, y1: gy };
+      draw(); ev.preventDefault(); return;
+    }
 
     // Object mode: interact with any object, or exit to previous mode on empty click
     if (state.canvasMode === "object" && ev.button === 0) {
@@ -3823,9 +4094,19 @@
     const rect = canvas.getBoundingClientRect();
     state.hoverCell = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
 
+    // Manifold drag update
+    if (state.canvasMode === 'manifold' && state.pointer.down && state._manifoldDrag) {
+      const gxy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      state._manifoldDrag.x1 = Math.floor(gxy.x);
+      state._manifoldDrag.y1 = Math.floor(gxy.y);
+      draw(); ev.preventDefault(); return;
+    }
+
     // Update cursor when hovering (not dragging)
     if (!state.pointer.down) {
-      if (state.canvasMode === "move") {
+      if (state.canvasMode === 'manifold') {
+        canvas.style.cursor = 'crosshair';
+      } else if (state.canvasMode === "move") {
         canvas.style.cursor = "grab";
       } else if (state.canvasMode === "paint") {
         const rectP = canvas.getBoundingClientRect();
@@ -3951,6 +4232,19 @@
   function handlePointerUp(ev) {
     if (canvas.hasPointerCapture(ev.pointerId)) {
       canvas.releasePointerCapture(ev.pointerId);
+    }
+
+    // Manifold tool: finish drag → show shape picker if region is big enough
+    if (state.canvasMode === 'manifold' && state._manifoldDrag) {
+      const d = state._manifoldDrag;
+      state._manifoldDrag = null;
+      const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
+      const w = Math.abs(d.x1 - d.x0) + 1, h = Math.abs(d.y1 - d.y0) + 1;
+      if (w >= 3 && h >= 3) {
+        const rect2 = canvas.getBoundingClientRect();
+        showShapePicker(ev.clientX - rect2.left, ev.clientY - rect2.top, { x, y, w, h });
+      }
+      draw(); ev.preventDefault(); return;
     }
 
     if (state.pointer.mode === "lens" && _lensDragOp) {
@@ -4361,6 +4655,34 @@
     const hintReveal = document.getElementById("hintReveal");
     if (hintReveal) hintReveal.addEventListener("click", toggleHint);
 
+    // Shape picker
+    const shapePicker = document.getElementById('shapePicker');
+    if (shapePicker) {
+      shapePicker.querySelectorAll('[data-shape]').forEach(btn => {
+        btn.addEventListener('click', () => confirmShape(btn.dataset.shape));
+      });
+      document.getElementById('shapePickerCancel')?.addEventListener('click', () => {
+        hideShapePicker(); draw();
+      });
+      // Close on outside click
+      document.addEventListener('pointerdown', (e) => {
+        if (shapePicker.style.display !== 'none' && !shapePicker.contains(e.target))
+          hideShapePicker();
+      }, { capture: true });
+    }
+
+    // Manifold overlap protocol & kernel inherit settings
+    const mOverlapA = document.getElementById('manifoldOverlapA');
+    const mOverlapB = document.getElementById('manifoldOverlapB');
+    if (mOverlapA) mOverlapA.addEventListener('change', () => { state.manifoldOverlapProtocol = 'A'; });
+    if (mOverlapB) mOverlapB.addEventListener('change', () => { state.manifoldOverlapProtocol = 'B'; });
+
+    const mKernelInherit = document.getElementById('manifoldKernelInherit');
+    if (mKernelInherit) mKernelInherit.addEventListener('change', () => {
+      state.manifoldKernelInherit = mKernelInherit.checked;
+      if (state.manifoldKernelInherit) rebuildAllManifoldRegions();
+    });
+
     document.getElementById("playBtn").addEventListener("click", () => {
       syncPlayUI(!state.running, false);
     });
@@ -4514,6 +4836,7 @@
 
       if (ev.key === "`") { toggleToolPalette(); ev.preventDefault(); return; }
       if (ev.key === "?" || (ev.key === "h" && !mod)) { toggleHint(); ev.preventDefault(); return; }
+      if (ev.key === "t" && !mod) { setCanvasMode("manifold"); ev.preventDefault(); return; }
 
       // Selection edit shortcuts
       const hasSel = state.selection && state.selection.w > 0 && state.selection.h > 0;
@@ -4880,6 +5203,7 @@
       state.kernelShape = kernelShapeEl.value;
       _kernelOffsets = null;
       _kernelCacheKey = null;
+      if (state.manifoldKernelInherit) rebuildAllManifoldRegions();
     });
 
     kernelRadiusEl.addEventListener("input", () => {
@@ -4887,6 +5211,7 @@
       kernelRadiusOut.textContent = kernelRadiusEl.value;
       _kernelOffsets = null;
       _kernelCacheKey = null;
+      if (state.manifoldKernelInherit) rebuildAllManifoldRegions();
     });
 
     const ruleInput2El = document.getElementById("ruleInput2");
@@ -5099,6 +5424,9 @@
       trailDecay: state.trailDecay,
       showHints: state.showHints,
       hintDuration: state.hintDuration,
+      manifoldRegions: state.manifoldRegions.map(r => r.toJSON()),
+      manifoldOverlapProtocol: state.manifoldOverlapProtocol,
+      manifoldKernelInherit: state.manifoldKernelInherit,
       repulseEnabled: state.repulseEnabled,
       repulseAge: state.repulseAge,
       repulseStrength: state.repulseStrength,
@@ -5148,8 +5476,18 @@
     if (cfg.colorByAge           !== undefined) state.colorByAge           = cfg.colorByAge;
     if (cfg.showTrails           !== undefined) state.showTrails           = cfg.showTrails;
     if (cfg.trailDecay           !== undefined) state.trailDecay           = cfg.trailDecay;
-    if (cfg.showHints            !== undefined) state.showHints            = cfg.showHints;
-    if (cfg.hintDuration         !== undefined) state.hintDuration         = cfg.hintDuration;
+    if (cfg.showHints                !== undefined) state.showHints                = cfg.showHints;
+    if (cfg.hintDuration             !== undefined) state.hintDuration             = cfg.hintDuration;
+    if (cfg.manifoldOverlapProtocol  !== undefined) state.manifoldOverlapProtocol  = cfg.manifoldOverlapProtocol;
+    if (cfg.manifoldKernelInherit    !== undefined) state.manifoldKernelInherit    = cfg.manifoldKernelInherit;
+    if (cfg.manifoldRegions) {
+      state.manifoldRegions = cfg.manifoldRegions.map(d => {
+        const r = new MRegion(d);
+        r.build(_manifoldKernelWeights());
+        return r;
+      });
+      state._manifoldIdSeq = state.manifoldRegions.reduce((m, r) => Math.max(m, r.id), 0);
+    }
     if (cfg.repulseEnabled       !== undefined) state.repulseEnabled       = cfg.repulseEnabled;
     if (cfg.repulseAge           !== undefined) state.repulseAge           = cfg.repulseAge;
     if (cfg.repulseStrength      !== undefined) state.repulseStrength      = cfg.repulseStrength;
@@ -5223,6 +5561,11 @@
     sc("showHints",            state.showHints);
     sv("hintDuration",         state.hintDuration);
     st("hintDurationOut",      state.hintDuration + "s");
+    sc("manifoldKernelInherit", state.manifoldKernelInherit);
+    const mOA = document.getElementById('manifoldOverlapA');
+    const mOB = document.getElementById('manifoldOverlapB');
+    if (mOA) mOA.checked = state.manifoldOverlapProtocol === 'A';
+    if (mOB) mOB.checked = state.manifoldOverlapProtocol === 'B';
     sc("repulseEnabled",       state.repulseEnabled);
     sv("repulseAge",           state.repulseAge);
     st("repulseAgeOut",        state.repulseAge);
