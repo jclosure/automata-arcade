@@ -66,8 +66,9 @@
             </div>
             <button id="tpReveal" class="tp-reveal" title="Show tools  ` ">›</button>
 
-            <!-- Mode / objective hint pill -->
-            <div id="objectiveText" class="obj-hud">Sandbox: draw, drop, and experiment.</div>
+            <!-- Mode / objective hint pill + reveal tab -->
+            <div id="objectiveText" class="obj-hud"></div>
+            <button id="hintReveal" class="hint-reveal" title="Show hint  H">?</button>
 
             <div id="overlayMessage" class="overlay hidden"></div>
             <div id="timelineBar" class="tl-bar">
@@ -460,6 +461,17 @@
                     <li><kbd>0 0</kbd> Clear cell output</li>
                     <li><kbd>Escape</kbd> Exit command mode</li>
                   </ul>
+                  <h3 class="lab-heading" style="margin-top:12px">Hints</h3>
+                  <div class="rl-row" style="margin-bottom:4px">
+                    <label class="rl-check"><input type="checkbox" id="showHints" checked /> Show hints</label>
+                  </div>
+                  <div class="rl-row" style="align-items:center;gap:6px">
+                    <span style="font-size:10px;color:var(--muted);white-space:nowrap">Duration</span>
+                    <input id="hintDuration" class="rl-radius" type="range" min="3" max="30" step="1" value="10" style="flex:1" />
+                    <span id="hintDurationOut" style="font-size:10px;color:var(--muted);min-width:24px">10s</span>
+                  </div>
+                  <p style="font-size:10px;color:var(--muted);margin:4px 0 0">Press <kbd>H</kbd> or click the <strong>?</strong> tab to re-show.</p>
+
                   <h3 class="lab-heading" style="margin-top:12px">Keyboard Shortcuts</h3>
                   <ul class="fixed-keys">
                     <li><kbd>Space</kbd> Play / Pause</li>
@@ -485,6 +497,8 @@
                     <li><kbd>Middle Drag</kbd> Pan</li>
                     <li><kbd>Scroll over lens</kbd> Zoom lens</li>
                     <li><kbd>1–7</kbd> Mode presets</li>
+                    <li><kbd>`</kbd> Toggle tool palette</li>
+                    <li><kbd>H</kbd> Toggle hint</li>
                   </ul>
                 </div>
               </div>

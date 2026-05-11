@@ -88,6 +88,8 @@
     colorByAge: false,
     showTrails: false,
     trailDecay: 0.88,
+    showHints: true,
+    hintDuration: 10,
     repulseEnabled: false,
     repulseAge: 20,
     repulseStrength: 1,
@@ -3249,16 +3251,23 @@
     comboOut.textContent = `x${state.combo}`;
     speedOut.textContent = String(state.stepsPerSecond);
 
+    let newHintText;
     if (state.mode === "arcade" && state.levelState) {
       const level = LEVELS[state.levelIndex];
-      objectiveText.textContent = `${level.objective} ${level.progress(state.levelState)}`;
+      newHintText = `${level.objective} ${level.progress(state.levelState)}`;
     } else if (is3DMode()) {
       const surface = SURFACES[state.mode];
       const surfName = surface ? surface.name : "Sphere";
-      objectiveText.textContent = `${surfName} — left-click to draw, right-drag to spin.`;
+      newHintText = `${surfName} — left-click to draw, right-drag to spin.`;
     } else {
       const surface = activeSurface();
-      objectiveText.textContent = `${surface.name}: ${surface.desc}`;
+      newHintText = `${surface.name}: ${surface.desc}`;
+    }
+    if (newHintText !== _lastHintText) {
+      _lastHintText = newHintText;
+      showHint(newHintText);
+    } else {
+      objectiveText.textContent = newHintText;
     }
   }
 
@@ -3421,6 +3430,44 @@
     if (!palette) return;
     const hidden = palette.classList.toggle("tp-hidden");
     if (reveal) reveal.classList.toggle("tp-show", hidden);
+  }
+
+  // --- Hint / objective HUD auto-dismiss ---
+  let _hintTimer = null;
+  let _lastHintText = "";
+
+  function showHint(text) {
+    const hud   = document.getElementById("objectiveText");
+    const tab   = document.getElementById("hintReveal");
+    if (!hud) return;
+    if (!state.showHints) {
+      hud.classList.add("obj-hud-hidden");
+      if (tab) tab.classList.remove("tp-show");
+      return;
+    }
+    if (text !== undefined) hud.textContent = text;
+    hud.classList.remove("obj-hud-hidden");
+    if (tab) tab.classList.remove("tp-show");
+    clearTimeout(_hintTimer);
+    if (state.hintDuration > 0) {
+      _hintTimer = setTimeout(() => {
+        hud.classList.add("obj-hud-hidden");
+        if (tab) tab.classList.add("tp-show");
+      }, state.hintDuration * 1000);
+    }
+  }
+
+  function toggleHint() {
+    const hud = document.getElementById("objectiveText");
+    const tab = document.getElementById("hintReveal");
+    if (!hud) return;
+    if (hud.classList.contains("obj-hud-hidden")) {
+      showHint();
+    } else {
+      clearTimeout(_hintTimer);
+      hud.classList.add("obj-hud-hidden");
+      if (tab) tab.classList.add("tp-show");
+    }
   }
 
   function setCanvasMode(mode) {
@@ -4311,6 +4358,9 @@
     if (tpCollapse) tpCollapse.addEventListener("click", toggleToolPalette);
     if (tpReveal)   tpReveal.addEventListener("click", toggleToolPalette);
 
+    const hintReveal = document.getElementById("hintReveal");
+    if (hintReveal) hintReveal.addEventListener("click", toggleHint);
+
     document.getElementById("playBtn").addEventListener("click", () => {
       syncPlayUI(!state.running, false);
     });
@@ -4463,6 +4513,7 @@
       }
 
       if (ev.key === "`") { toggleToolPalette(); ev.preventDefault(); return; }
+      if (ev.key === "?" || (ev.key === "h" && !mod)) { toggleHint(); ev.preventDefault(); return; }
 
       // Selection edit shortcuts
       const hasSel = state.selection && state.selection.w > 0 && state.selection.h > 0;
@@ -4780,6 +4831,19 @@
       state.contigMinSize = Number(e.target.value);
       document.getElementById("contigMinSizeOut").textContent = e.target.value;
     });
+
+    const showHintsEl    = document.getElementById("showHints");
+    const hintDurationEl = document.getElementById("hintDuration");
+    const hintDurationOut= document.getElementById("hintDurationOut");
+    if (showHintsEl) showHintsEl.addEventListener("change", () => {
+      state.showHints = showHintsEl.checked;
+      showHint();
+    });
+    if (hintDurationEl) hintDurationEl.addEventListener("input", () => {
+      state.hintDuration = Number(hintDurationEl.value);
+      if (hintDurationOut) hintDurationOut.textContent = state.hintDuration + "s";
+      showHint();
+    });
   }
 
   function setupRuleLab() {
@@ -5033,6 +5097,8 @@
       colorByAge: state.colorByAge,
       showTrails: state.showTrails,
       trailDecay: state.trailDecay,
+      showHints: state.showHints,
+      hintDuration: state.hintDuration,
       repulseEnabled: state.repulseEnabled,
       repulseAge: state.repulseAge,
       repulseStrength: state.repulseStrength,
@@ -5082,6 +5148,8 @@
     if (cfg.colorByAge           !== undefined) state.colorByAge           = cfg.colorByAge;
     if (cfg.showTrails           !== undefined) state.showTrails           = cfg.showTrails;
     if (cfg.trailDecay           !== undefined) state.trailDecay           = cfg.trailDecay;
+    if (cfg.showHints            !== undefined) state.showHints            = cfg.showHints;
+    if (cfg.hintDuration         !== undefined) state.hintDuration         = cfg.hintDuration;
     if (cfg.repulseEnabled       !== undefined) state.repulseEnabled       = cfg.repulseEnabled;
     if (cfg.repulseAge           !== undefined) state.repulseAge           = cfg.repulseAge;
     if (cfg.repulseStrength      !== undefined) state.repulseStrength      = cfg.repulseStrength;
@@ -5152,6 +5220,9 @@
     sc("showTrails",           state.showTrails);
     sv("trailDecay",           state.trailDecay);
     st("trailDecayOut",        state.trailDecay.toFixed(2));
+    sc("showHints",            state.showHints);
+    sv("hintDuration",         state.hintDuration);
+    st("hintDurationOut",      state.hintDuration + "s");
     sc("repulseEnabled",       state.repulseEnabled);
     sv("repulseAge",           state.repulseAge);
     st("repulseAgeOut",        state.repulseAge);
