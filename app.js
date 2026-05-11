@@ -3415,6 +3415,14 @@
     }
   }
 
+  function toggleToolPalette() {
+    const palette = document.getElementById("toolPalette");
+    const reveal  = document.getElementById("tpReveal");
+    if (!palette) return;
+    const hidden = palette.classList.toggle("tp-hidden");
+    if (reveal) reveal.classList.toggle("tp-show", hidden);
+  }
+
   function setCanvasMode(mode) {
     // Restore lifted cells when leaving select mid-move
     if (state.canvasMode === "select" && state._selMoving && state._selCells) {
@@ -4294,10 +4302,14 @@
   }
 
   function setupControls() {
-    // Mode toolbar
+    // Floating tool palette
     document.querySelectorAll(".mode-btn").forEach((btn) => {
       btn.addEventListener("click", () => setCanvasMode(btn.dataset.mode));
     });
+    const tpCollapse = document.getElementById("tpCollapse");
+    const tpReveal   = document.getElementById("tpReveal");
+    if (tpCollapse) tpCollapse.addEventListener("click", toggleToolPalette);
+    if (tpReveal)   tpReveal.addEventListener("click", toggleToolPalette);
 
     document.getElementById("playBtn").addEventListener("click", () => {
       syncPlayUI(!state.running, false);
@@ -4449,6 +4461,8 @@
       if (ev.target && ["INPUT", "SELECT", "TEXTAREA"].includes(ev.target.tagName)) {
         return;
       }
+
+      if (ev.key === "`") { toggleToolPalette(); ev.preventDefault(); return; }
 
       // Selection edit shortcuts
       const hasSel = state.selection && state.selection.w > 0 && state.selection.h > 0;

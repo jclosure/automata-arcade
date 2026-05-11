@@ -44,18 +44,6 @@
             <span class="tb-stat">Combo <strong id="comboOut">×1</strong></span>
           </div>
         </div>
-        <!-- Row 2: canvas mode · transforms · objective -->
-        <div class="tb-row">
-          <div class="mode-group">
-            <button class="mode-btn mode-btn-active" data-mode="paint" title="Paint (P)">✏ Paint</button>
-            <button class="mode-btn" data-mode="move" title="Move/Pan (M)">✥ Move</button>
-            <button class="mode-btn" data-mode="select" title="Select (S)">⬚ Select</button>
-            <button class="mode-btn" data-mode="force" title="Force Paint (V)">⊛ Force</button>
-            <button class="mode-btn" data-mode="lens" title="Lens (L)">🔍 Lens</button>
-          </div>
-          <span class="tb-sep"></span>
-          <div class="objective" id="objectiveText">Sandbox: draw, drop, and experiment.</div>
-        </div>
       </header>
 
       <!-- workspace-area: canvas + right sidebar + script kernel below -->
@@ -65,6 +53,22 @@
           <section class="board-wrap">
             <canvas id="lifeCanvas"></canvas>
             <canvas id="sphereCanvas"></canvas>
+
+            <!-- Floating tool palette -->
+            <div id="toolPalette" class="tool-palette">
+              <button class="mode-btn mode-btn-active" data-mode="paint" title="Paint  P">✏</button>
+              <button class="mode-btn" data-mode="move"   title="Move / Pan  M">✥</button>
+              <button class="mode-btn" data-mode="select" title="Select  S">⬚</button>
+              <button class="mode-btn" data-mode="force"  title="Force Paint  V">⊛</button>
+              <button class="mode-btn" data-mode="lens"   title="Lens  L">🔍</button>
+              <div class="tp-divider"></div>
+              <button id="tpCollapse" class="tp-collapse-btn" title="Hide palette  ` ">‹</button>
+            </div>
+            <button id="tpReveal" class="tp-reveal" title="Show tools  ` ">›</button>
+
+            <!-- Mode / objective hint pill -->
+            <div id="objectiveText" class="obj-hud">Sandbox: draw, drop, and experiment.</div>
+
             <div id="overlayMessage" class="overlay hidden"></div>
             <div id="timelineBar" class="tl-bar">
               <div class="tl-btns">

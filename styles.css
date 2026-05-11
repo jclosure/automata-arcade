@@ -127,36 +127,140 @@ button:hover {
   border-color: var(--accent-2);
 }
 
-.mode-group {
+/* ── Floating Tool Palette ───────────────────────────────────── */
+.tool-palette {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
   display: flex;
-  gap: 3px;
-  background: rgba(0, 0, 0, 0.2);
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 5px;
+  background: rgba(7, 19, 29, 0.93);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 3px;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.04);
+  transition: opacity 0.16s, transform 0.16s;
 }
-
+.tool-palette.tp-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-58px);
+}
+.tool-palette button {
+  padding: 0;
+}
 .mode-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
   border: 1px solid transparent;
+  border-radius: 8px;
   background: none;
-  border-radius: 6px;
-  padding: 4px 9px;
-  font-size: 0.8rem;
   color: var(--muted);
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  cursor: pointer;
+  transition: background 0.11s, color 0.11s, border-color 0.11s;
 }
-
 .mode-btn:hover {
+  color: var(--ink);
+  border-color: var(--line);
+  background: rgba(255,255,255,0.07);
+}
+.mode-btn-active {
+  background: rgba(91, 224, 188, 0.14) !important;
+  border-color: var(--accent-2) !important;
+  color: var(--accent-2) !important;
+}
+.tp-divider {
+  width: 22px;
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+}
+.tp-collapse-btn {
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+.tp-collapse-btn:hover {
   color: var(--ink);
   border-color: var(--line);
   background: rgba(255,255,255,0.06);
 }
 
-.mode-btn-active {
-  background: rgba(91, 224, 188, 0.15);
-  border-color: var(--accent) !important;
-  color: var(--accent) !important;
+/* Reveal tab shown when palette is hidden */
+.tp-reveal {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  width: 14px;
+  height: 46px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: rgba(7, 19, 29, 0.88);
+  border: 1px solid var(--line);
+  border-left: none;
+  border-radius: 0 7px 7px 0;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, color 0.1s;
 }
+.tp-reveal.tp-show {
+  opacity: 1;
+  pointer-events: all;
+}
+.tp-reveal:hover { color: var(--ink); }
+
+/* Mode / objective hint pill */
+.obj-hud {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 28;
+  background: rgba(7, 19, 29, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(100, 160, 195, 0.14);
+  border-radius: 999px;
+  padding: 4px 16px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+  max-width: 55%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.obj-hud:empty { display: none; }
 
 .speed-wrap,
 .mode-wrap,
@@ -174,11 +278,6 @@ button:hover {
   width: 90px;
 }
 
-.objective {
-  max-width: 420px;
-  font-size: 0.87rem;
-  color: var(--muted);
-}
 
 /* ── VSCode-style layout ─────────────────────────────────────── */
 
