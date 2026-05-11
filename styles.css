@@ -1074,6 +1074,7 @@ kbd {
 
 #ruleLab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   margin-top: 4px;
 }
@@ -1083,6 +1084,7 @@ kbd {
   align-items: center;
   gap: 5px;
   font-size: 0.8rem;
+  width: 100%;
 }
 
 .rl-row > span {
@@ -1176,6 +1178,7 @@ kbd {
 
 #physicsLab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   margin-top: 4px;
 }
@@ -1187,6 +1190,7 @@ kbd {
   font-size: 0.8rem;
   color: var(--muted);
   cursor: pointer;
+  width: 100%;
 }
 
 #driftXOut,
@@ -1216,6 +1220,7 @@ kbd {
 
 #waveLab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   margin-top: 4px;
 }
@@ -1235,6 +1240,7 @@ kbd {
 
 #typeLab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   margin-top: 4px;
 }
@@ -1281,6 +1287,7 @@ kbd {
 #zoneLab,
 #fieldLab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   margin-top: 4px;
 }
@@ -1558,6 +1565,7 @@ kbd {
 
 #analysisLab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 5px;
   margin-top: 4px;
 }
