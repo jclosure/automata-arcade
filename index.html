@@ -10,47 +10,42 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <h1>Automata Arcade</h1>
-          <p>Engineering Lab // Cellular Sandbox + Mission Mode</p>
-        </div>
-        <div class="hud" id="hudStats">
-          <div class="hud-item"><span>Generation</span><strong id="genOut">0</strong></div>
-          <div class="hud-item"><span>Population</span><strong id="popOut">0</strong></div>
-          <div class="hud-item"><span>Score</span><strong id="scoreOut">0</strong></div>
-          <div class="hud-item"><span>Combo</span><strong id="comboOut">x1</strong></div>
-        </div>
-      </header>
-
-      <section class="controls-row">
-        <div class="left-controls">
-          <button id="playBtn">Play</button>
+      <header class="toolbar">
+        <!-- Row 1: brand · playback · world · nav -->
+        <div class="tb-row">
+          <span class="tb-brand">⬡ Automata Arcade</span>
+          <span class="tb-sep"></span>
+          <button id="playBtn">▶ Play</button>
           <button id="stepBtn">Step</button>
           <button id="clearBtn">Clear</button>
-          <button id="demoBtn">Load Demo</button>
-          <label class="speed-wrap">Speed
-            <input id="speedInput" type="range" min="1" max="30" value="10" />
-            <span id="speedOut">10</span>
-          </label>
-          <label class="mode-wrap">Mode
-            <select id="modeSelect">
-              <option value="sandbox">Sandbox</option>
-              <option value="arcade">Arcade</option>
-              <option value="sphere">Sphere</option>
-              <option value="torus">Torus</option>
-              <option value="klein">Klein Bottle</option>
-              <option value="mobius">Möbius Strip</option>
-              <option value="cylinder">Cylinder</option>
-            </select>
-          </label>
-          <label class="level-wrap">Level
-            <select id="levelSelect"></select>
-          </label>
-          <label class="mode-wrap"><input type="checkbox" id="sharedStateInput" /> Shared State</label>
-          <button id="startLevelBtn">Start Level</button>
+          <button id="demoBtn">Demo</button>
+          <label class="speed-wrap"><input id="speedInput" type="range" min="1" max="30" value="10" /><span id="speedOut">10</span>×</label>
+          <span class="tb-sep"></span>
+          <select id="modeSelect" title="World topology">
+            <option value="sandbox">Sandbox</option>
+            <option value="arcade">Arcade</option>
+            <option value="sphere">Sphere</option>
+            <option value="torus">Torus</option>
+            <option value="klein">Klein Bottle</option>
+            <option value="mobius">Möbius Strip</option>
+            <option value="cylinder">Cylinder</option>
+          </select>
+          <select id="levelSelect" title="Level"></select>
+          <label class="tb-check"><input type="checkbox" id="sharedStateInput" /> Shared</label>
+          <button id="startLevelBtn">Start</button>
+          <span class="tb-sep"></span>
           <button id="libraryBtn">Library</button>
-          <button id="notebookBtn" class="nb-toggle-btn">📓 Notebook</button>
+          <button id="notebookBtn" class="nb-toggle-btn">📔 Journal</button>
+          <span class="tb-sep"></span>
+          <div class="tb-hud" id="hudStats">
+            <span class="tb-stat">Gen <strong id="genOut">0</strong></span>
+            <span class="tb-stat">Pop <strong id="popOut">0</strong></span>
+            <span class="tb-stat">Score <strong id="scoreOut">0</strong></span>
+            <span class="tb-stat">Combo <strong id="comboOut">×1</strong></span>
+          </div>
+        </div>
+        <!-- Row 2: canvas mode · transforms · objective -->
+        <div class="tb-row">
           <div class="mode-group">
             <button class="mode-btn mode-btn-active" data-mode="paint" title="Paint (P)">✏ Paint</button>
             <button class="mode-btn" data-mode="move" title="Move/Pan (M)">✥ Move</button>
@@ -58,9 +53,8 @@
             <button class="mode-btn" data-mode="force" title="Force Paint (V)">⊛ Force</button>
             <button class="mode-btn" data-mode="lens" title="Lens (L)">🔍 Lens</button>
           </div>
-        </div>
-        <div class="right-controls">
-          <label>Rotate
+          <span class="tb-sep"></span>
+          <label class="tb-check">Rotate
             <select id="rotateSelect">
               <option value="0">0°</option>
               <option value="90">90°</option>
@@ -68,10 +62,11 @@
               <option value="270">270°</option>
             </select>
           </label>
-          <label><input type="checkbox" id="flipX" /> Flip X</label>
+          <label class="tb-check"><input type="checkbox" id="flipX" /> Flip X</label>
+          <span class="tb-sep"></span>
           <div class="objective" id="objectiveText">Sandbox: draw, drop, and experiment.</div>
         </div>
-      </section>
+      </header>
 
       <!-- workspace-area: canvas + right sidebar + script kernel below -->
       <div class="workspace-area">
@@ -441,7 +436,37 @@
               <div class="stab-panel" id="stabSettings" style="display:none">
                 <div class="stab-header">⚙ Settings</div>
                 <div class="settings-panel">
-                  <h3 class="lab-heading">Keyboard Shortcuts</h3>
+                  <h3 class="lab-heading">Script Kernel — Edit Mode</h3>
+                  <ul class="fixed-keys">
+                    <li><kbd>Shift+Enter</kbd> Run cell</li>
+                    <li><kbd>Ctrl+Enter</kbd> Run cell (alias)</li>
+                    <li><kbd>Escape</kbd> Enter command mode</li>
+                    <li><kbd>Tab</kbd> Indent</li>
+                    <li><kbd>Shift+Tab</kbd> Dedent</li>
+                  </ul>
+                  <h3 class="lab-heading" style="margin-top:12px">Script Kernel — Command Mode</h3>
+                  <p style="font-size:10px;color:#678;margin:0 0 6px">Press <kbd>Escape</kbd> inside a cell to enter command mode (blue highlight). Press <kbd>Enter</kbd> to edit.</p>
+                  <ul class="fixed-keys">
+                    <li><kbd>Enter</kbd> Edit selected cell</li>
+                    <li><kbd>Shift+Enter</kbd> Run + select below</li>
+                    <li><kbd>Ctrl+Enter</kbd> Run in place</li>
+                    <li><kbd>↑</kbd> / <kbd>K</kbd> Select cell above</li>
+                    <li><kbd>↓</kbd> / <kbd>J</kbd> Select cell below</li>
+                    <li><kbd>A</kbd> Insert cell above</li>
+                    <li><kbd>B</kbd> Insert cell below</li>
+                    <li><kbd>D D</kbd> Delete selected cell</li>
+                    <li><kbd>Z</kbd> Undo delete</li>
+                    <li><kbd>X</kbd> Cut cell</li>
+                    <li><kbd>C</kbd> Copy cell</li>
+                    <li><kbd>V</kbd> Paste below</li>
+                    <li><kbd>Shift+V</kbd> Paste above</li>
+                    <li><kbd>O</kbd> Toggle output</li>
+                    <li><kbd>L</kbd> Toggle line numbers</li>
+                    <li><kbd>I I</kbd> Pause / resume hooks</li>
+                    <li><kbd>0 0</kbd> Clear cell output</li>
+                    <li><kbd>Escape</kbd> Exit command mode</li>
+                  </ul>
+                  <h3 class="lab-heading" style="margin-top:12px">Keyboard Shortcuts</h3>
                   <ul class="fixed-keys">
                     <li><kbd>Space</kbd> Play / Pause</li>
                     <li><kbd>N</kbd> Step forward</li>
@@ -492,25 +517,39 @@
               <span id="hooksActiveBadge" class="hooks-badge" style="display:none"></span>
             </div>
             <div class="bp-header-btns">
-              <button class="sc-btn" id="scriptClearHooks" title="Remove all active pipeline hooks">⊘ Hooks</button>
+              <select id="scriptSampleSelect" class="sc-sample-select" title="Insert example snippet">
+                <option value="">examples…</option>
+                <optgroup label="Utility">
+                  <option value="status">status snapshot</option>
+                  <option value="seed">random fill</option>
+                  <option value="symmetric">symmetric seed</option>
+                </optgroup>
+                <optgroup label="Visualization">
+                  <option value="sparkline">pop sparkline</option>
+                  <option value="hud">gen/pop HUD</option>
+                </optgroup>
+                <optgroup label="Automation">
+                  <option value="stability">auto-pause on stable</option>
+                  <option value="events">event monitor</option>
+                  <option value="oneShot">one-shot hook</option>
+                </optgroup>
+                <optgroup label="Research">
+                  <option value="ruleExplore">rule explorer</option>
+                </optgroup>
+              </select>
+              <button class="sc-btn" id="scriptClearHooks" title="Pause / resume all hooks">⊘ Hooks</button>
               <button class="sc-btn" id="scriptRunAll" title="Run all cells">▶ Run All</button>
               <button class="sc-btn" id="scriptAddCell" title="Add new cell">+ Cell</button>
               <button class="sc-btn sc-btn-danger" id="scriptClearAll" title="Delete all cells">🗑 Clear</button>
-              <button class="sc-btn" id="scriptDrawerToggle" title="Toggle panel">▲</button>
+              <button class="sc-btn" id="scriptDrawerToggle" title="Toggle panel (~)">▲</button>
             </div>
           </div>
           <div class="bp-body" id="scriptPanelBody">
-            <div class="sc-samples-bar">
-              <span class="sc-samples-label">samples</span>
-              <select id="scriptSampleSelect" class="sc-sample-select">
-                <option value="">— pick a sample —</option>
-                <option value="log">Log population</option>
-                <option value="fill">Fill random region</option>
-                <option value="rules">Set rules (Day &amp; Night)</option>
-                <option value="hookStep">Hook: log every 60 gens</option>
-                <option value="hookPause">Hook: pause at pop 500</option>
-                <option value="overlay">Draw canvas overlay</option>
-              </select>
+            <div id="hooksListPanel" class="sc-hooks-panel" style="display:none">
+              <div class="sc-hooks-bar">
+                <span class="sc-hooks-bar-title">HOOKS</span>
+              </div>
+              <div id="hooksList" class="sc-hooks-list"></div>
             </div>
             <div id="scriptCells" class="sc-cells-list"></div>
           </div>
@@ -520,14 +559,14 @@
 
     </div><!-- /app-shell -->
 
-    <!-- Notebook panel — slides in from right -->
+    <!-- Journal panel — slides in from right -->
     <aside id="notebookPanel" class="nb-panel">
       <div class="nb-header">
-        <span class="nb-wordmark">📓 NOTEBOOK</span>
+        <span class="nb-wordmark">📔 JOURNAL</span>
         <div class="nb-header-actions">
           <button id="nbScenesBtn" class="nb-hdr-btn" title="Play marked scenes as a cinematic">▶ Scenes</button>
-          <button id="nbExportBtn" class="nb-hdr-btn" title="Export notebook to clipboard">⬇ Export</button>
-          <button id="nbCloseBtn" class="nb-hdr-btn nb-close-btn" title="Close notebook">✕</button>
+          <button id="nbExportBtn" class="nb-hdr-btn" title="Export journal to clipboard">⬇ Export</button>
+          <button id="nbCloseBtn" class="nb-hdr-btn nb-close-btn" title="Close journal">✕</button>
         </div>
       </div>
 
