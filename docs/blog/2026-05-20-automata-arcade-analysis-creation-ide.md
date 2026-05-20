@@ -1,68 +1,72 @@
 # Automata Arcade Is Becoming an Instrument
 
-*What we built since the last update: lenses, zones, selection transforms, copy/cut/paste, and automata mapped onto manifolds.*
+*Lenses, zones, copy/paste transforms, manifold worlds, and now a live Script Kernel: Automata Arcade is turning from a sandbox into a programmable laboratory for emergent systems.*
 
-Automata Arcade started as a playful cellular automata sandbox. You could paint life onto a grid, press play, and watch little machines collide.
+Automata Arcade started as a friendly Conway's Game of Life playground. Paint cells. Press Play. Watch tiny machines appear, collide, self-destruct, and occasionally surprise you.
 
-That is still there. But the project has crossed a threshold: it is no longer only a place to *run* automata. It is becoming a place to **compose, inspect, transform, and reason with them**.
+That is still the door in. But the project has crossed a threshold.
+
+It is no longer only a place to *run* automata. It is becoming a place to **compose, instrument, mutate, measure, and reason with them** — a creation IDE for small universes.
 
 Try it here: [Automata Arcade live demo](https://automata-arcade.vercel.app) · [GitHub repository](https://github.com/jclosure/automata-arcade)
 
-The new version feels less like a toy canvas and more like a small creation IDE for emergent systems: part arcade, part microscope, part geometry lab, part notebook.
+![Typing directly into a Script Kernel cell while the live automata board waits above it](../media/blog-update-2026-05/04-script-kernel-typing-cell.png)
+
+If you are a developer, this is the fun part: the simulation is programmable from the inside. If you are a mathematician, the fun part is stranger: rules, initial conditions, geometry, topology, and observation are all editable objects. You can make a little universe, perturb its laws, and watch what survives.
+
+That is the vibe of this update: part arcade, part microscope, part notebook, part geometry lab, part invitation to ask dangerous little questions about computation and reality.
+
+## The board is now material
+
+The first big change is that the board no longer feels like a bitmap of living/dead cells. It feels like material.
+
+Selection mode lets you draw a rectangle around an active mechanism and operate on it:
+
+- move it
+- rotate it
+- flip it
+- copy it
+- cut it
+- paste it
+- capture it as a reusable prefab
 
 ![Selection, lenses, zones, and a live automata workspace](../media/blog-update-2026-05/02-selection-rotate-translate-copy-cut-paste.png)
 
-## The board is now an editable object
+That sounds ordinary if you come from image editors. In cellular automata, it is quietly radical.
 
-The biggest shift is that the board is no longer just a bitmap of living and dead cells. It has tools.
+A glider stream, oscillator, eater, failed collision, partial gate, or weird survivor is no longer just an accident on the board. It becomes something you can pick up and work with.
 
-Selection mode turns a patch of life into something you can operate on:
+You can take a reaction that almost works, move it two cells over, rotate it into phase, paste a second copy downstream, and test the altered geometry without rebuilding the whole machine from scratch.
 
-- draw a rectangular selection around an active mechanism
-- translate it across the board
-- rotate it 90 degrees
-- flip it
-- copy, cut, and paste it somewhere else
-- capture the result as a reusable prefab
+The discovery loop changes from:
 
-That sounds ordinary if you come from image editors. In cellular automata, it is quietly powerful. A glider stream, oscillator, eater, failed collision, or partial circuit is not just an accident anymore. It can become material.
+> clear, redraw, hope
 
-You can take a reaction that almost works, move it two cells over, rotate it into phase, paste a second copy downstream, and keep experimenting without rebuilding the whole machine from scratch.
+into:
 
-That changes the rhythm of discovery. Instead of “clear, redraw, hope,” the loop becomes:
+> observe, isolate, transform, test, preserve
 
-1. observe a behavior
-2. isolate the interesting region
-3. transform it
-4. test the altered geometry
-5. save what survives
-
-This is exactly the kind of workflow a serious automata workbench needs.
+That is what a serious automata workbench needs. Not just simulation. Editing.
 
 ## Lenses make local behavior legible
 
-We also added lenses: circular magnifiers that live directly on the canvas.
+Automata are multiscale. The local mechanism and the global consequence are both important.
+
+A lens gives you both.
 
 ![Lenses, zones, force fields, and local inspection](../media/blog-update-2026-05/01-lenses-zones-fields-live.png)
 
 ![A short capture of lenses and zones while the automaton evolves](../media/blog-update-2026-05/01-lenses-zones-fields-live.gif)
 
-The important detail is that a lens does **not** zoom the whole world. It magnifies a local region while the global scene remains visible.
+A normal zoom forces you to choose between detail and context. Lenses stay on the board. You can place one over a gun output, another over a collision front, and keep the whole system visible while studying neighbor-level behavior.
 
-That matters because automata are multiscale. You often need to see two things at once:
+That matters because a lot of automata work is phase work. One cell of offset can change everything. A lens makes those tiny differences visible without losing the larger machine.
 
-- the local neighbor-level mechanism: births, deaths, collisions, phase offsets
-- the global consequence: streams, boundaries, population waves, circuit timing
+## Zones turn the plane into an ecology
 
-A normal zoom forces you to choose. Lenses let you keep context.
+Zones are rectangular regions with their own rule overrides. A cell can cross from classic Life into HighLife, Seeds, Day & Night, or any custom B/S rule.
 
-They make the board feel more like an analysis surface: you can place one lens over the gun output, another over the collision front, and compare cause and effect while the system runs.
-
-## Zones turn the board into an ecology
-
-Zones are rectangular regions with their own rule overrides. A cell can live in one part of the board under classic Life and cross into another region governed by HighLife, Seeds, Day & Night, or a custom B/S rule.
-
-That turns the plane from a neutral stage into a designed environment.
+That turns the board from a neutral plane into an ecology.
 
 A zone can be:
 
@@ -73,131 +77,214 @@ A zone can be:
 - an arcade objective
 - a computational component
 
-This is where Automata Arcade starts to feel like a laboratory. You are no longer asking only, “What does this rule do?” You can ask, “What happens when this organism crosses into another physics?”
+Instead of only asking, “What does this rule do?” you can ask, “What happens when an organism crosses into another physics?”
 
 That is a much richer question.
 
-## Regions can now be mapped to manifolds
+## The Script Kernel makes it a live notebook
 
-The most ambitious new feature is Manifold Regions.
+The biggest new affordance is the Script Kernel: a cell-based JavaScript notebook embedded directly under the simulation.
 
-Instead of switching the whole world into a sphere, torus, Möbius strip, or Klein bottle, you can mark a rectangular region of the ordinary board and map that region onto a topology.
+It is not a dev console next to the game. It is **Jupyter notebooks over live game state**.
 
-![Manifold regions: torus and Möbius patches embedded in the flat workspace](../media/blog-update-2026-05/03-manifold-regions-curvature-viewport.png)
+You type into a cell, run it, and the universe above reacts.
 
-![A short capture of automata evolving across manifold-mapped regions](../media/blog-update-2026-05/03-manifold-regions-curvature.gif)
+![Submitting a Script Kernel cell and immediately seeing the board mutate plus output in the cell](../media/blog-update-2026-05/05-script-kernel-submit-reaction.png)
 
-This is a strange and exciting idea: local topology embedded in a flat automata workspace.
+A cell can be a one-line probe:
 
-A glider can encounter a patch where edges wrap like a torus. Another stream can cross a Möbius seam. The same birth/survival rules can produce different behavior because the neighbor relationships have changed.
+```js
+log('gen:', sim.generation, 'pop:', cells.size, 'rules:', rules.toString());
+```
 
-That is the key lesson: in cellular automata, “the rule” is not the whole system. Geometry is part of the machine.
+It can be a world generator:
 
-Manifold Regions make that visible and editable. They let us treat topology as a creative material, not just as a rendering mode.
+```js
+cells.clear();
+cells.fill(-30, -18, 60, 36, 0.22);
+rules.set([3], [2, 3]);
+sim.step(80);
+log('seeded universe → gen', sim.generation, 'pop', cells.size);
+```
 
-## The IDE shape is emerging
+Or it can become a persistent instrument attached to the engine:
 
-Several systems are now converging:
+```js
+const hist = globals.population ??= [];
 
-- the canvas tools: paint, select, transform, stamp
-- the analysis tools: period detection, population tracking, heatmaps
-- the rule tools: presets, B/S editing, kernel radius, Lenia controls
-- the spatial tools: zones, force fields, lenses
-- the topology tools: manifold regions and curvature visualization
-- the journal/script direction: experiments can become documented, replayable scenes
+hook('afterStep', () => {
+  hist.push(cells.size);
+  if (hist.length > 300) hist.shift();
+});
 
-That combination is the real story.
+hook('afterDraw', () => {
+  const { ctx, width, height } = canvas;
+  ctx.fillStyle = '#5be0bc';
+  ctx.fillText(`pop ${cells.size}`, width - 90, height - 24);
+});
+```
 
-Automata Arcade is becoming a place where someone can build an automaton, study it, annotate it, mutate it, and turn discoveries into reusable parts.
+![Scripted HUD and population sparkline running live on top of the automata board](../media/blog-update-2026-05/06-script-kernel-sparkline-hud-live.png)
 
-The “arcade” is still important. Play keeps the system approachable. But underneath the play, we are building an instrument.
+That last example is the important leap. Scripts are not only commands. They can become live probes.
 
-## What this teaches
+The SDK is intentionally tiny:
 
-A cellular automaton is often introduced as a grid plus a rule. Automata Arcade now demonstrates a more complete model:
+- `cells` reads and edits the alive-cell set
+- `rules` inspects and changes B/S rules
+- `sim` steps, plays, pauses, and reports generation count
+- `canvas` exposes the drawing context for overlays and instruments
+- `globals` persists data across cells and reruns
+- `hook()` attaches code to `afterStep`, `beforeDraw`, or `afterDraw`
+- `manifold` exposes curvature/topology data for active manifold regions
+- `log()` / `print()` writes straight into the cell output
 
-> behavior = rule × initial condition × tools × geometry × observation
+That gives developers a low-friction playground. A few lines can become:
 
-The same seed behaves differently when selected and rotated. It behaves differently inside a zone. It behaves differently under a lens because the observer notices different facts. It behaves differently when part of the board has toroidal adjacency.
+- a population oscilloscope
+- a collision detector
+- a scripted seed generator
+- a rule-sweep harness
+- a topology probe
+- a visual debugger
+- a one-off research instrument
+- a tiny experiment runner
 
-That is a wonderful teaching surface.
+![Close-up of Script Kernel cells, run buttons, hooks, output, and notebook-style workflow](../media/blog-update-2026-05/07-script-kernel-notebook-closeup.png)
 
-Beginners can still paint cells and press Play. More advanced users can ask deeper questions:
+The ergonomics matter. Cells show `ok`, `err`, or `hooked`. Rerunning a cell cleans up its old hooks, so iteration does not leave ghost callbacks behind. There is a Run All button, a sample dropdown, hook pause/resume, output strips, and keyboard command mode.
 
-- What makes a structure stable?
-- Which collisions are phase-sensitive?
-- Can a region boundary act like a diode?
-- Can topology preserve, destroy, or transform signals?
-- Can we compose Life mechanisms the way we compose circuits?
+You can still paint with the mouse. But when you need precision, repetition, measurement, or visualization, you script the world in place.
 
-The tool is starting to answer those questions visually.
+That is where the project starts to feel less like “a Life implementation” and more like a laboratory bench.
 
-## Where should we go next?
+## Topology is becoming editable
 
-Here are the directions that feel most alive.
+The most mathematically exciting direction is manifold support.
 
-### 1. A true experiment notebook
+Automata Arcade can run the same local update rules on curved or identified spaces: sphere, torus, Klein bottle, Möbius strip, cylinder. The rendered surface changes, but the underlying lesson is deeper: adjacency is part of the machine.
 
-The journal should become more than notes. It should capture:
+![A scripted torus run: the same coordinate logic rendered as a curved manifold](../media/blog-update-2026-05/08-torus-mode-scripted-isomorphism.png)
+
+A torus is not just a pretty mesh. It is a different neighbor relationship. A glider that would leave the edge on a flat finite board can wrap. A wavefront can meet itself. A collision can be created by topology rather than by another object.
+
+This is the automata version of a deep mathematical move: keep the local law, change the space it acts on, and study what invariants survive.
+
+That is why manifold regions are so interesting. Eventually, the whole board should not have to be one topology. You should be able to embed a toroidal patch in a flat world, route a signal through it, and ask what the seam computes.
+
+Could a Möbius strip invert orientation? Could a torus preserve circulation? Could a Klein bottle create useful interference? Could topology become a programming primitive?
+
+Those are the kinds of questions this tool is starting to make tangible.
+
+## Why this matters beyond the toy
+
+Cellular automata are often introduced as “grid plus rule.” That is true, but incomplete.
+
+A better mental model is:
+
+> behavior = rule × initial condition × geometry × boundary × observation
+
+Automata Arcade is becoming a place where every term in that equation is editable.
+
+That matters because automata are a primitive model for one of the biggest ideas in science: **local laws can generate global reality**.
+
+To be precise: Conway's Life is not the Standard Model. The Standard Model is a quantum field theory with gauge symmetries, fields, particles, interactions, renormalization, and an enormous amount of experimentally validated structure. A binary cellular automaton is not secretly particle physics.
+
+But automata are a powerful toy model for developing the right intuitions.
+
+They let us ask Standard-Model-shaped questions in a world small enough to hold in our hands:
+
+- What does locality buy you?
+- Which patterns behave like persistent particles?
+- Which interactions conserve information?
+- Which collisions annihilate, scatter, bind, or transmit?
+- Which symmetries matter?
+- How does geometry affect dynamics?
+- Can a stable object be nothing more than a process that keeps reproducing itself?
+
+A glider does not know it is a glider. It is not an object in the rule table. It is a recurring pattern — an emergent identity created by local transitions. That is the philosophical electricity of cellular automata.
+
+They suggest a way of thinking where “things” are not fundamental. Processes are. Relations are. Update rules are. Symmetries are. Stable patterns are what local law looks like after time has had a chance to work.
+
+That is why this project is exciting. We are not simulating life because pixels are alive. We are simulating life because artificial life gives us a handle on emergence. And emergence may be one of the only ways minds like ours can build intuition for the simulation we appear to be living in.
+
+Automata Arcade is not a proof of digital physics. It is an intuition engine.
+
+## Applications hiding in the playground
+
+The playful interface hides serious applications:
+
+- **Education** — teach emergence, phase, locality, topology, and computation visually.
+- **Research sketches** — prototype cellular rules, boundary conditions, probes, and metrics quickly.
+- **Artificial life** — search for stable organisms, ecologies, lifecycles, and failure modes.
+- **Computational design** — compose glider logic, gates, reflectors, and rule-boundary devices.
+- **Dynamical systems** — study attractors, oscillators, phase transitions, and perturbation sensitivity.
+- **Mathematical visualization** — show how changing topology changes behavior without changing the local rule.
+- **Creative coding** — use the Script Kernel to turn automata into generative instruments.
+
+The arcade wrapper matters because play lowers the activation energy. You can arrive as a beginner, paint cells, and enjoy the chaos. Then, if curiosity catches, the tool opens downward: rules, lenses, zones, scripts, manifolds, notebooks, measurements.
+
+That is the right shape for a learning instrument.
+
+## Where it wants to go next
+
+A few directions feel especially alive.
+
+### A true experiment notebook
+
+The Journal and Script Kernel should converge into reproducible computational essays. A saved experiment should capture:
 
 - board state
 - rule configuration
 - selected regions
-- camera/lens positions
+- camera and lens positions
 - script cells
 - manifold mappings
-- replayable timelines
+- timeline snapshots
+- replayable scenes
 
-Then every discovery becomes reproducible. A reader could open a journal entry and step through the exact moment where a collision becomes a gate.
+Then a discovery is not just a screenshot. It is something another person can open, run, inspect, fork, and mutate.
 
-### 2. A prefab ecology
+### A prefab ecology
 
-Selections should graduate into a living library: not just static patterns, but annotated organisms and machines.
+Selections should become a semantic library of organisms and machines.
 
-Imagine prefab cards that know:
+Imagine prefab cards that know their period, velocity, bounding box, input/output lanes, compatible rules, required phase, and known failure modes.
 
-- period
-- bounding box
-- velocity
-- input/output lanes
-- required phase
-- compatible rules
-- known failure modes
+Then users could build with glider guns, eaters, reflectors, oscillators, and gates as components rather than raw pixels.
 
-Then users could build with glider guns, eaters, reflectors, oscillators, and gates as semantic components.
+### Topology as a programming language
 
-### 3. Topology as a first-class programming tool
+Manifold Regions are the start. The ambitious version is a topology workbench where users compute by editing adjacency itself.
 
-Manifold Regions are the beginning. Next we can ask: can topology compute?
+Not just “place a gate here,” but “route this signal through a non-orientable region and see whether the seam transforms it.”
 
-Could a Möbius strip invert a signal? Could a torus preserve circulation? Could a Klein bottle produce useful interference patterns? Could region seams become logic boundaries?
+That is the kind of weirdness worth building tools for.
 
-The ambitious version is a topology workbench where users design spatial circuits by editing adjacency itself.
-
-### 4. Search, evolution, and synthesis
+### Search, evolution, and synthesis
 
 The Evo Lab can become a discovery engine.
 
-Give the system a target — sustain population, emit a glider, stabilize a boundary, make a periodic oscillator, survive a topology seam — and let it search over rules, seeds, zones, and transforms.
+Give the system a target — sustain population, emit a glider, stabilize a boundary, survive a topology seam — and let it search over rules, seeds, zones, transforms, and scripts.
 
-Not to replace human creativity, but to give the human strange candidates they would never draw by hand.
+Not to replace human creativity, but to hand the human strange candidates they would never draw by hand.
 
-### 5. A publishable atlas of automata phenomena
+## Come play with the machinery
 
-Automata Arcade could host an atlas: a curated collection of scenes, rules, mechanisms, manifolds, and experiments.
+The best part of this update is the feeling of working with the system.
 
-Each entry would be interactive, not just a screenshot. Readers could inspect it, fork it, mutate it, and publish their own variations.
-
-That would turn the project from a tool into a community knowledge base.
-
-## The feeling
-
-The best part of this update is not any single feature. It is the feeling of working with the system.
-
-You can watch a collision, drop a lens on it, draw a zone around it, select the survivor, rotate it, paste it into another region, and then ask what happens if that region is no longer flat.
+You can watch a collision, drop a lens on it, draw a zone around it, select the survivor, rotate it, paste it into another region, open a script cell, attach a population probe, and then ask what happens if that region is no longer flat.
 
 That is the moment Automata Arcade becomes something special.
 
 Not just a simulation.
 
-A place to make discoveries.
+A tiny universe with handles.
+
+If you like compilers, shaders, category theory, dynamical systems, artificial life, topology, complex systems, cellular automata, or the weird borderland where math starts to look alive, come play.
+
+Fork it. Script it. Break it. Add a detector. Add a new topology. Teach it to search. Build an atlas. Make it stranger.
+
+We are simulating life because life may be what computation looks like from the inside.
+
+And the only way to learn what these little universes can do is to start running them.
