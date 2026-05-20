@@ -224,7 +224,19 @@ Selections can be **captured as custom prefabs** via the Capture panel in the si
 
 ## 💻 Script Kernel
 
-A collapsible code editor drawer at the bottom of the workspace. Write JavaScript that runs against a live SDK injected into each cell.
+A collapsible code editor drawer at the bottom of the workspace. Write JavaScript that runs against the live game state through an activated SDK injected into each cell.
+
+Think of the Script Kernel as **Jupyter notebooks over the automaton**: every cell is a small executable experiment sitting beside the board. You can run one cell to seed a pattern, another to change rules, another to collect metrics, and another to draw overlays — all without leaving the simulation. Cells have output strips, persist locally, can be run individually or all at once, and can register long-lived hooks into the engine pipeline. That makes the board feel less like a closed game and more like an inspectable, programmable research object.
+
+### Activated scripting interface
+
+- **Notebook-style cells** — each cell is an isolated async JavaScript function with top-level SDK variables already in scope.
+- **Live game-state access** — scripts can read and mutate cells, B/S rules, simulation playback, canvas overlays, and shared notebook globals.
+- **Pipeline hooks** — cells can subscribe to `afterStep`, `beforeDraw`, or `afterDraw` to keep analyses and visualizations running as the automaton evolves.
+- **Persistent experiment memory** — `globals` survives between cell runs and hooks, so one cell can collect data while another renders or summarizes it.
+- **Safe teardown semantics** — rerunning or deleting a cell cleans up its previous hooks, so experiments can be iterated without orphaned callbacks.
+- **Operational UI** — the kernel toolbar shows active hook count; cells expose `hooked`, `ok`, and `err` status chips; hooks can be paused/resumed globally.
+- **Command mode** — Vim-style `j/k/Enter/D/Z/P` navigation makes the cell list usable as a fast notebook, not just a text area.
 
 ### SDK Reference
 
@@ -258,6 +270,19 @@ hook(name, fn)        // register a pipeline hook; returns unsubscribe fn
 // hook names: 'afterStep' | 'beforeDraw' | 'afterDraw'
 
 log(...args)          // print to the cell's output strip
+print(...args)        // alias for log(...args)
+
+manifold              // array of active 3D/manifold regions, if any
+manifold[0].shape
+manifold[0].rect
+manifold[0].protocol
+manifold[0].contains(x, y)
+manifold[0].christoffelAt(x, y)
+manifold[0].christoffelMagnitudeAt(x, y)
+manifold[0].gaussianCurvatureAt(x, y)
+manifold[0].ruleOverride
+manifold[0].setRuleOverride([3], [2,3])
+manifold[0].curvatureModulate = true
 ```
 
 ### Example: live population sparkline
