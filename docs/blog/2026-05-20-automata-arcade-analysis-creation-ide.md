@@ -6,6 +6,8 @@ Automata Arcade started as a playful cellular automata sandbox. You could paint 
 
 That is still there. But the project has crossed a threshold: it is no longer only a place to *run* automata. It is becoming a place to **compose, inspect, transform, and reason with them**.
 
+Try it here: [Automata Arcade live demo](https://automata-arcade.vercel.app) · [GitHub repository](https://github.com/jclosure/automata-arcade)
+
 The new version feels less like a toy canvas and more like a small creation IDE for emergent systems: part arcade, part microscope, part geometry lab, part notebook.
 
 ![Selection, lenses, zones, and a live automata workspace](../media/blog-update-2026-05/02-selection-rotate-translate-copy-cut-paste.png)
