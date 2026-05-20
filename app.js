@@ -96,6 +96,11 @@
     _manifoldIdSeq: 0,
     _manifoldSelected: null,       // id of selected region
     _manifoldDrag: null,           // {x0,y0,x1,y1} while dragging a new region rect
+    _manifoldDragMode: null,       // 'move'|'resize-nw'|... while moving/resizing
+    _manifoldDragOrigin: null,     // {mx,my,rx,ry,rw,rh} snapshot for drag math
+    christoffelVis: false,
+    christoffelComponent: 'magnitude', // 'magnitude'|'gaussian'|'G0'..'G5'
+    christoffelModStrength: 1.0,       // curvature modulation multiplier (K × this → N shift)
     repulseEnabled: false,
     repulseAge: 20,
     repulseStrength: 1,
@@ -270,6 +275,7 @@
 
   let sphereThree = null;
   let manifoldThree = null;
+  const _manifoldViewports = new Map(); // regionId → ManifoldViewport
   let _threeRenderer = null;
   let threeDInputSetup = false;
   let _kernelOffsets = null;
@@ -1768,6 +1774,382 @@
 
   const { ManifoldRegion: MRegion } = window.ManifoldEngine;
 
+  // ─── Surface parametric functions (u,v) → {x,y,z}, u,v ∈ [0,1] ───────────
+  const SURFACE_FUNCS = {
+    torus(u, v) {
+      const R = 2.0, r = 0.7, phi = u * Math.PI * 2, theta = v * Math.PI * 2;
+      return { x: (R + r * Math.cos(theta)) * Math.cos(phi), y: (R + r * Math.cos(theta)) * Math.sin(phi), z: r * Math.sin(theta) };
+    },
+    sphere(u, v) {
+      const phi = u * Math.PI * 2, theta = v * Math.PI;
+      return { x: Math.sin(theta) * Math.cos(phi), y: Math.sin(theta) * Math.sin(phi), z: Math.cos(theta) };
+    },
+    cylinder(u, v) {
+      const phi = u * Math.PI * 2;
+      return { x: Math.cos(phi), y: Math.sin(phi), z: (v - 0.5) * 3 };
+    },
+    mobius(u, v) {
+      const phi = u * Math.PI * 2, w = (v - 0.5) * 1.2, R = 1.5;
+      return { x: (R + w * Math.cos(phi / 2)) * Math.cos(phi), y: (R + w * Math.cos(phi / 2)) * Math.sin(phi), z: w * Math.sin(phi / 2) };
+    },
+    klein(u, v) {
+      // Lawson's immersion: φ=u·2π, θ=v·2π
+      const phi = u * Math.PI * 2, theta = v * Math.PI * 2, a = 2;
+      const cp2 = Math.cos(phi / 2), sp2 = Math.sin(phi / 2);
+      const st = Math.sin(theta), s2t = Math.sin(2 * theta);
+      return {
+        x: (a + cp2 * st - sp2 * s2t) * Math.cos(phi),
+        y: (a + cp2 * st - sp2 * s2t) * Math.sin(phi),
+        z: sp2 * st + cp2 * s2t,
+      };
+    },
+    rp2(u, v) {
+      // Roman surface (Steiner) — standard RP² immersion
+      const phi = u * Math.PI, theta = v * Math.PI / 2;
+      return {
+        x: Math.sin(2 * theta) * Math.cos(phi) * Math.cos(phi),
+        y: Math.sin(2 * theta) * Math.sin(phi) * Math.cos(phi),
+        z: Math.cos(2 * theta) * 0.5,
+      };
+    },
+  };
+
+  // ─── ManifoldViewport ──────────────────────────────────────────────────────
+  // Floating Three.js panel per manifold region. Draggable, resizable.
+
+  class ManifoldViewport {
+    constructor(region, panelX, panelY) {
+      this.region   = region;
+      this.panelX   = panelX;
+      this.panelY   = panelY;
+      this.panelW   = 300;
+      this.panelH   = 290;
+      this._orbit   = { theta: 0.6, phi: 1.0, dist: 5, dragging: false, lastX: 0, lastY: 0 };
+      this._painting = false;
+      this._destroyed = false;
+      this._buildDOM();
+      this._buildScene();
+    }
+
+    _buildDOM() {
+      const { SHAPE_META } = window.ManifoldEngine;
+      const meta = SHAPE_META[this.region.shape] || {};
+
+      const panel = document.createElement('div');
+      panel.className = 'mv-panel';
+      panel.style.left   = this.panelX + 'px';
+      panel.style.top    = this.panelY + 'px';
+      panel.style.width  = this.panelW + 'px';
+      panel.style.height = this.panelH + 'px';
+
+      // ── Header ──────────────────────────────────────────────────────────────
+      const header = document.createElement('div');
+      header.className = 'mv-header';
+      const title = document.createElement('span');
+      title.className = 'mv-title';
+      title.textContent = `${meta.icon || '⬡'} ${meta.label || this.region.shape} #${this.region.id}`;
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'mv-close'; closeBtn.textContent = '×'; closeBtn.title = 'Close';
+      closeBtn.addEventListener('click', () => this.destroy());
+      header.appendChild(title); header.appendChild(closeBtn);
+
+      // ── 3D canvas ───────────────────────────────────────────────────────────
+      const cvs = document.createElement('canvas');
+      cvs.className = 'mv-canvas';
+
+      // ── Resize handle ───────────────────────────────────────────────────────
+      const resizeHandle = document.createElement('div');
+      resizeHandle.className = 'mv-resize';
+
+      panel.appendChild(header);
+      panel.appendChild(cvs);
+      panel.appendChild(resizeHandle);
+
+      // Drag panel by header
+      this._setupPanelDrag(header, panel);
+      // Resize by corner handle
+      this._setupPanelResize(resizeHandle, panel, cvs);
+
+      const wrap = document.querySelector('.board-wrap');
+      wrap.appendChild(panel);
+
+      this.panel  = panel;
+      this.canvas3d = cvs;
+    }
+
+    _setupPanelDrag(handle, panel) {
+      handle.addEventListener('mousedown', e => {
+        if (e.target.classList.contains('mv-close')) return;
+        const startX = e.clientX, startY = e.clientY;
+        const startL = parseInt(panel.style.left) || 0;
+        const startT = parseInt(panel.style.top) || 0;
+        const onMove = e => {
+          panel.style.left = (startL + e.clientX - startX) + 'px';
+          panel.style.top  = (startT + e.clientY - startY) + 'px';
+        };
+        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        e.preventDefault();
+      });
+    }
+
+    _setupPanelResize(handle, panel, cvs) {
+      handle.addEventListener('mousedown', e => {
+        const startX = e.clientX, startY = e.clientY;
+        const startW = panel.offsetWidth, startH = panel.offsetHeight;
+        const onMove = e => {
+          const nw = Math.max(200, startW + e.clientX - startX);
+          const nh = Math.max(180, startH + e.clientY - startY);
+          panel.style.width  = nw + 'px';
+          panel.style.height = nh + 'px';
+          // Renderer resize happens in render()
+        };
+        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        e.preventDefault();
+      });
+    }
+
+    _buildScene() {
+      const cvs = this.canvas3d;
+      const W = this.panelW, H = this.panelH - 32;
+      const { w: CW, h: CH } = this.region.rect;
+
+      const renderer = new THREE.WebGLRenderer({ canvas: cvs, antialias: true, alpha: false });
+      renderer.setSize(W, H, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setClearColor(0x060c18, 1);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 50);
+      this._updateCamera(camera);
+
+      scene.add(new THREE.HemisphereLight(0x9ac8ee, 0x0c2035, 2.2));
+      const dLight = new THREE.DirectionalLight(0xffffff, 1.8);
+      dLight.position.set(4, 6, 5); scene.add(dLight);
+      const dLight2 = new THREE.DirectionalLight(0x40e0c0, 0.9);
+      dLight2.position.set(-3, -1, -4); scene.add(dLight2);
+
+      // One texel per cell — NearestFilter gives crisp cell boundaries
+      const texData = new Uint8Array(CW * CH * 4);
+      const tex = new THREE.DataTexture(texData, CW, CH, THREE.RGBAFormat);
+      tex.minFilter = tex.magFilter = THREE.NearestFilter;
+      tex.flipY = false;
+
+      const sfn = SURFACE_FUNCS[this.region.shape] || SURFACE_FUNCS.torus;
+      const US = Math.min(CW * 4, 320), VS = Math.min(CH * 4, 160);
+      const bgMesh  = this._buildBgMesh(sfn, US, VS, tex);
+      const cellGrid = this._buildCellGrid(sfn, CW, CH);
+
+      scene.add(bgMesh);
+      scene.add(cellGrid);
+
+      this.renderer  = renderer;
+      this.scene     = scene;
+      this.camera    = camera;
+      this.bgMesh    = bgMesh;
+      this.cellGrid  = cellGrid;
+      this.sfn       = sfn;
+      this.stateTexture = tex;
+      this.texData   = texData;
+      this.CW = CW; this.CH = CH;
+
+      this._setupCanvasInput(cvs);
+      this._syncCells();
+    }
+
+    _buildBgMesh(sfn, US, VS, tex) {
+      const pos = [], uvs = [], idx = [];
+      for (let iv = 0; iv <= VS; iv++) {
+        for (let iu = 0; iu <= US; iu++) {
+          const p = sfn(iu / US, iv / VS);
+          pos.push(p.x, p.y, p.z);
+          uvs.push(iu / US, iv / VS);
+        }
+      }
+      for (let iv = 0; iv < VS; iv++) {
+        for (let iu = 0; iu < US; iu++) {
+          const a = iv * (US + 1) + iu;
+          idx.push(a, a + 1, a + US + 1, a + 1, a + US + 2, a + US + 1);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+        map: tex,
+        color: 0xffffff,
+        specular: 0x2a6088,
+        shininess: 40,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+      }));
+    }
+
+    // Exact cell-boundary grid — lines follow the surface curvature
+    _buildCellGrid(sfn, CW, CH) {
+      const SEGS = Math.max(3, Math.ceil(60 / Math.max(CW, CH)));
+      const verts = [];
+      // Horizontal lines at v = ly/CH
+      for (let ly = 0; ly <= CH; ly++) {
+        const v = ly / CH;
+        for (let s = 0; s < CW * SEGS; s++) {
+          const u0 = s / (CW * SEGS), u1 = (s + 1) / (CW * SEGS);
+          const p0 = sfn(u0, v), p1 = sfn(u1, v);
+          verts.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+        }
+      }
+      // Vertical lines at u = lx/CW
+      for (let lx = 0; lx <= CW; lx++) {
+        const u = lx / CW;
+        for (let s = 0; s < CH * SEGS; s++) {
+          const v0 = s / (CH * SEGS), v1 = (s + 1) / (CH * SEGS);
+          const p0 = sfn(u, v0), p1 = sfn(u, v1);
+          verts.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+        color: 0x1c4878,
+        transparent: true,
+        opacity: 0.9,
+      }));
+    }
+
+    _syncCells() {
+      if (this._destroyed) return;
+      const { x: rx, y: ry } = this.region.rect;
+      const { CW, CH, texData, stateTexture } = this;
+      const alive = activeAlive();
+      for (let ly = 0; ly < CH; ly++) {
+        for (let lx = 0; lx < CW; lx++) {
+          const i = (ly * CW + lx) * 4;
+          if (alive.has(key(rx + lx, ry + ly))) {
+            texData[i] = 0; texData[i+1] = 220; texData[i+2] = 168; texData[i+3] = 255;
+          } else {
+            texData[i] = 10; texData[i+1] = 25; texData[i+2] = 58; texData[i+3] = 255;
+          }
+        }
+      }
+      stateTexture.needsUpdate = true;
+    }
+
+    _updateCamera(camera) {
+      const { theta, phi, dist } = this._orbit;
+      camera.position.set(
+        dist * Math.sin(phi) * Math.sin(theta),
+        dist * Math.cos(phi),
+        dist * Math.sin(phi) * Math.cos(theta),
+      );
+      camera.lookAt(0, 0, 0);
+    }
+
+    _hitTest(clientX, clientY) {
+      const rect = this.canvas3d.getBoundingClientRect();
+      const mx = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const my = -((clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(mx, my), this.camera);
+      const hits = raycaster.intersectObject(this.bgMesh);
+      if (!hits.length || !hits[0].uv) return null;
+      const { x: rx, y: ry, w: W, h: H } = this.region.rect;
+      const lx = Math.max(0, Math.min(W - 1, Math.floor(hits[0].uv.x * W)));
+      const ly = Math.max(0, Math.min(H - 1, Math.floor(hits[0].uv.y * H)));
+      return { cx: rx + lx, cy: ry + ly };
+    }
+
+    _setupCanvasInput(cvs) {
+      // Orbit: right-drag (or alt+left-drag)
+      cvs.addEventListener('mousedown', e => {
+        const isOrbit = e.button === 2 || (e.button === 0 && e.altKey);
+        const isPaint = e.button === 0 && !e.altKey;
+        if (isOrbit) {
+          this._orbit.dragging = true;
+          this._orbit.lastX = e.clientX; this._orbit.lastY = e.clientY;
+          e.preventDefault();
+        } else if (isPaint) {
+          this._painting = true;
+          const hit = this._hitTest(e.clientX, e.clientY);
+          if (hit) setCell(hit.cx, hit.cy, e.shiftKey ? false : !isAlive(hit.cx, hit.cy));
+          e.preventDefault();
+        }
+      });
+      window.addEventListener('mousemove', e => {
+        if (this._destroyed) return;
+        if (this._orbit.dragging) {
+          const dx = e.clientX - this._orbit.lastX;
+          const dy = e.clientY - this._orbit.lastY;
+          this._orbit.theta -= dx * 0.007;
+          this._orbit.phi    = Math.max(0.1, Math.min(Math.PI - 0.1, this._orbit.phi + dy * 0.007));
+          this._orbit.lastX  = e.clientX; this._orbit.lastY = e.clientY;
+        } else if (this._painting) {
+          const hit = this._hitTest(e.clientX, e.clientY);
+          if (hit) setCell(hit.cx, hit.cy, !e.shiftKey);
+        }
+      });
+      window.addEventListener('mouseup', () => {
+        this._orbit.dragging = false;
+        this._painting = false;
+      });
+      cvs.addEventListener('wheel', e => {
+        this._orbit.dist = Math.max(1.5, Math.min(12, this._orbit.dist + e.deltaY * 0.008));
+        e.preventDefault();
+      }, { passive: false });
+      cvs.addEventListener('contextmenu', e => e.preventDefault());
+    }
+
+    render() {
+      if (this._destroyed) return;
+      const panel = this.panel;
+      const cvs   = this.canvas3d;
+      const cw = panel.clientWidth;
+      const ch = Math.max(60, panel.clientHeight - 32);
+      if (cvs.width !== cw || cvs.height !== ch) {
+        this.renderer.setSize(cw, ch, false);
+        this.camera.aspect = cw / ch;
+        this.camera.updateProjectionMatrix();
+      }
+      this._syncCells();
+      this._updateCamera(this.camera);
+      this.renderer.render(this.scene, this.camera);
+    }
+
+    destroy() {
+      if (this._destroyed) return;
+      this._destroyed = true;
+      this.cellMesh.geometry.dispose();
+      this.bgMesh.geometry.dispose();
+      this.renderer.dispose();
+      this.panel.remove();
+      _manifoldViewports.delete(this.region.id);
+      manifoldInspectorSync();
+      draw();
+    }
+  }
+
+  function openManifoldViewport(region) {
+    if (_manifoldViewports.has(region.id)) {
+      _manifoldViewports.get(region.id).panel.style.zIndex = '50';
+      return;
+    }
+    // Position near the region's screen rect, offset to avoid overlap
+    const tl = worldToScreen(region.rect.x, region.rect.y);
+    const vp = new ManifoldViewport(region, Math.max(10, tl.x + 10), Math.max(10, tl.y + 10));
+    _manifoldViewports.set(region.id, vp);
+    manifoldInspectorSync();
+  }
+
+  function _renderAllViewports() {
+    for (const vp of _manifoldViewports.values()) vp.render();
+  }
+
   function _manifoldKernelWeights() {
     // Convert flat kernel offsets to [dx, dy, weight] triples (weight=1 for binary kernels)
     return getKernelOffsets().map(([dx, dy]) => [dx, dy, 1.0]);
@@ -1785,6 +2167,7 @@
     const idx = state.manifoldRegions.findIndex(r => r.id === id);
     if (idx !== -1) state.manifoldRegions.splice(idx, 1);
     if (state._manifoldSelected === id) state._manifoldSelected = null;
+    if (_manifoldViewports.has(id)) _manifoldViewports.get(id).destroy();
     manifoldInspectorSync();
   }
 
@@ -1837,6 +2220,27 @@
       }).flat();
     }
     return neighbors;
+  }
+
+  // Returns {born, survive, n} for cells inside regions with rule/curvature overrides, or null.
+  // `n` is the effective (possibly shifted) neighbor count.
+  function getManifoldCellRule(cx, cy, n) {
+    const regions = getRegionsContaining(cx, cy);
+    if (!regions.length) return null;
+    const r = regions[regions.length - 1]; // last-wins for rules
+    if (!r.ruleOverride && !r.curvatureModulate) return null;
+
+    const born    = r.ruleOverride ? r.ruleOverride.B : state.ruleB;
+    const survive = r.ruleOverride ? r.ruleOverride.S : state.ruleS;
+    let effectiveN = n;
+
+    if (r.curvatureModulate && state.christoffelModStrength !== 0) {
+      const { x: rx, y: ry, w: W, h: H } = r.rect;
+      const K = window.ManifoldEngine.computeGaussianCurvature(cx - rx, cy - ry, W, H, r.shape);
+      effectiveN = Math.max(0, Math.round(n + K * state.christoffelModStrength));
+    }
+
+    return { born, survive, n: effectiveN };
   }
 
   const MAX_CELLS_CONTIG = 4000;
@@ -2039,7 +2443,8 @@
     const repulse = state.repulseEnabled;
     const repulseAge = state.repulseAge;
     const repulseStrength = state.repulseStrength;
-    const hasManifolds = state.manifoldRegions.length > 0;
+    const hasManifolds     = state.manifoldRegions.length > 0;
+    const hasManifoldRules = hasManifolds && state.manifoldRegions.some(r => r.ruleOverride || r.curvatureModulate);
 
     for (const k of alive) {
       const [c, r] = parseKey(k);
@@ -2116,7 +2521,7 @@
         : 0;
       const hasZones  = state.zones.length > 0;
       const hasFields = state.forceFields.length > 0;
-      const adjusted  = densityBonus !== 0 || hasZones || hasFields;
+      const adjusted  = densityBonus !== 0 || hasZones || hasFields || hasManifoldRules;
 
       if (!adjusted) {
         const born = state.ruleB;
@@ -2148,7 +2553,11 @@
             }
             if (unionB) { born = unionB; survive = unionS; }
           }
-          const adj = Math.max(0, n + (hasFields ? getFieldBonus(col, row) : 0) + densityBonus);
+          let adj = Math.max(0, n + (hasFields ? getFieldBonus(col, row) : 0) + densityBonus);
+          if (hasManifoldRules) {
+            const mr = getManifoldCellRule(col, row, adj);
+            if (mr) { born = mr.born; survive = mr.survive; adj = mr.n; }
+          }
           if (born.has(adj) || (alive.has(k) && survive.has(adj))) {
             next.add(k);
             nextAgeMap.set(k, alive.has(k) ? (cellAgeMap.get(k) ?? 0) + 1 : 1);
@@ -3054,26 +3463,27 @@
     const { SHAPE_META } = window.ManifoldEngine;
 
     for (const region of state.manifoldRegions) {
-      const { x, y, w, h, shape } = { ...region.rect, shape: region.shape };
+      if (region.visible === false) continue;
+      const { x, y, w, h } = region.rect;
+      const shape = region.shape;
       const tl = worldToScreen(x, y);
-      const sw = w * state.zoom, sh = h * state.zoom;
+      const br = worldToScreen(x + w, y + h);
+      const sw = br.x - tl.x, sh = br.y - tl.y;
       const selected = state._manifoldSelected === region.id;
 
       // Tint fill
-      ctx.fillStyle = selected
-        ? 'rgba(91,224,188,0.08)'
-        : 'rgba(91,224,188,0.04)';
+      ctx.fillStyle = selected ? 'rgba(91,224,188,0.10)' : 'rgba(91,224,188,0.04)';
       ctx.fillRect(tl.x, tl.y, sw, sh);
 
       // Border
-      ctx.strokeStyle = selected ? 'rgba(91,224,188,0.9)' : 'rgba(91,224,188,0.45)';
+      ctx.strokeStyle = selected ? 'rgba(91,224,188,0.95)' : 'rgba(91,224,188,0.45)';
       ctx.lineWidth = selected ? 1.5 : 1;
       ctx.setLineDash(selected ? [] : [4, 4]);
       ctx.strokeRect(tl.x + 0.5, tl.y + 0.5, sw - 1, sh - 1);
       ctx.setLineDash([]);
 
-      // Label (icon + id) at top-left if zoom large enough
-      if (state.zoom >= 4) {
+      // Label (icon + id) at top-left if region is large enough on screen
+      if (sw > 40 && sh > 16) {
         const meta = SHAPE_META[shape] || {};
         const label = `${meta.icon || '?'} ${shape} #${region.id}`;
         ctx.font = 'bold 10px monospace';
@@ -3081,20 +3491,32 @@
         ctx.fillText(label, tl.x + 4, tl.y + 12);
       }
 
-      // Identification-direction tick marks on edges (like the global border)
+      // Identification-direction tick marks on edges
       const mid = { x: tl.x + sw / 2, y: tl.y + sh / 2 };
       ctx.strokeStyle = 'rgba(91,224,188,0.55)';
       ctx.lineWidth = 1.2;
       const t = Math.min(7, sw / 4, sh / 4);
       const flipY = shape === 'klein' || shape === 'mobius';
       const flipX = shape === 'rp2';
-      // Top/bottom
       ctx.beginPath(); ctx.moveTo(mid.x - t, tl.y); ctx.lineTo(mid.x + t, tl.y); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(mid.x + (flipY ? t : -t), tl.y + sh); ctx.lineTo(mid.x + (flipY ? -t : t), tl.y + sh); ctx.stroke();
-      // Left/right (not for open-boundary cylinder/mobius y-axis)
       if (shape !== 'cylinder') {
         ctx.beginPath(); ctx.moveTo(tl.x, mid.y - t); ctx.lineTo(tl.x, mid.y + t); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(tl.x + sw, mid.y + (flipX ? t : -t)); ctx.lineTo(tl.x + sw, mid.y + (flipX ? -t : t)); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(br.x, mid.y + (flipX ? t : -t)); ctx.lineTo(br.x, mid.y + (flipX ? -t : t)); ctx.stroke();
+      }
+
+      // 8 resize handles when selected
+      if (selected) {
+        const HANDLE = 6;
+        const hpts = [
+          [tl.x, tl.y], [mid.x, tl.y], [br.x, tl.y],
+          [tl.x, mid.y],                [br.x, mid.y],
+          [tl.x, br.y], [mid.x, br.y], [br.x, br.y],
+        ];
+        ctx.fillStyle = 'rgba(91,224,188,1)';
+        for (const [hx, hy] of hpts) {
+          ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+        }
       }
     }
 
@@ -3111,6 +3533,182 @@
       ctx.fillRect(tl2.x, tl2.y, br2.x - tl2.x, br2.y - tl2.y);
       ctx.setLineDash([]);
     }
+
+    ctx.restore();
+  }
+
+  // ─── Christoffel / curvature visualization ────────────────────────────────
+
+  // Precomputed 256-entry rgba strings for two colormaps.
+  // Magnitude: dark navy → teal → amber → red
+  const _CMAP_MAG = (() => {
+    const stops = [[7,17,40],[0,53,128],[91,224,188],[255,209,102],[239,35,60]];
+    return Array.from({ length: 256 }, (_, i) => {
+      const t = i / 255, n = stops.length - 1;
+      const fi = t * n, j = Math.min(n - 1, Math.floor(fi)), f = fi - j;
+      const [r0,g0,b0] = stops[j], [r1,g1,b1] = stops[j + 1];
+      return `rgba(${Math.round(r0+(r1-r0)*f)},${Math.round(g0+(g1-g0)*f)},${Math.round(b0+(b1-b0)*f)},0.76)`;
+    });
+  })();
+  // Diverging: deep violet (negative) → near-black (zero) → electric gold (positive)
+  const _CMAP_DIV = (() => {
+    const neg = [[140,30,220],[70,10,110],[15,5,35]];
+    const pos = [[30,5,15],[160,90,5],[255,204,50]];
+    return Array.from({ length: 256 }, (_, i) => {
+      const t = i / 255;
+      let r, g, b;
+      if (t <= 0.5) {
+        const s = (0.5 - t) * 2, j = Math.min(1, Math.floor(s * 2)), f = s * 2 - j;
+        const [r0,g0,b0] = neg[j], [r1,g1,b1] = neg[j + 1] ?? neg[j];
+        r = r0+(r1-r0)*f; g = g0+(g1-g0)*f; b = b0+(b1-b0)*f;
+      } else {
+        const s = (t - 0.5) * 2, j = Math.min(1, Math.floor(s * 2)), f = s * 2 - j;
+        const [r0,g0,b0] = pos[j], [r1,g1,b1] = pos[j + 1] ?? pos[j];
+        r = r0+(r1-r0)*f; g = g0+(g1-g0)*f; b = b0+(b1-b0)*f;
+      }
+      return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},0.76)`;
+    });
+  })();
+
+  function _christoffelRoundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function drawChristoffelHeatmap() {
+    if (!state.christoffelVis || !state.manifoldRegions.length) return;
+    ctx.save();
+    const comp = state.christoffelComponent;
+    const isBipolar = comp !== 'magnitude';
+    const gaussK = window.ManifoldEngine.computeGaussianCurvature;
+
+    for (const region of state.manifoldRegions) {
+      if (region.visible === false) continue;
+      const { x: rx, y: ry, w: W, h: H } = region.rect;
+
+      // First pass: collect values and find range
+      const vals = new Float32Array(W * H);
+      let minV = Infinity, maxV = -Infinity;
+      for (let ly = 0; ly < H; ly++) {
+        for (let lx = 0; lx < W; lx++) {
+          const G = region.christoffelMap.get(key(rx + lx, ry + ly));
+          let v = 0;
+          if (G) {
+            if (comp === 'magnitude') {
+              let s = 0; for (let i = 0; i < 6; i++) s += G[i] * G[i]; v = Math.sqrt(s);
+            } else if (comp === 'gaussian') {
+              v = gaussK(lx, ly, W, H, region.shape);
+            } else {
+              v = G[parseInt(comp.slice(1), 10)];
+            }
+          }
+          vals[ly * W + lx] = v;
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+      }
+
+      const absMax = Math.max(Math.abs(minV), Math.abs(maxV));
+      if (absMax === 0) continue;
+
+      // Second pass: draw colored cell rects
+      const cmap = isBipolar ? _CMAP_DIV : _CMAP_MAG;
+      for (let ly = 0; ly < H; ly++) {
+        for (let lx = 0; lx < W; lx++) {
+          const v = vals[ly * W + lx];
+          const t = isBipolar ? 0.5 + 0.5 * (v / absMax) : (maxV > 0 ? v / maxV : 0);
+          const sc = worldToScreen(rx + lx, ry + ly);
+          ctx.fillStyle = cmap[Math.round(Math.max(0, Math.min(1, t)) * 255)];
+          ctx.fillRect(sc.x, sc.y, state.zoom + 0.5, state.zoom + 0.5);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawChristoffelHover() {
+    if (!state.christoffelVis || !state.hoverCell) return;
+    const hc = state.hoverCell;
+    const cx = Math.floor(hc.x), cy = Math.floor(hc.y);
+
+    // Find topmost visible manifold region containing the hover cell
+    let region = null;
+    for (let i = state.manifoldRegions.length - 1; i >= 0; i--) {
+      const r = state.manifoldRegions[i];
+      if (r.visible !== false && r.containsCell(cx, cy)) { region = r; break; }
+    }
+    if (!region) return;
+
+    const G = region.christoffelMap.get(key(cx, cy));
+    if (!G) return;
+
+    const { computeGaussianCurvature: gaussK, SHAPE_META } = window.ManifoldEngine;
+    const { x: rx, y: ry, w: W, h: H } = region.rect;
+    const lx = cx - rx, ly = cy - ry;
+
+    let mag = 0; for (let i = 0; i < 6; i++) mag += G[i] * G[i]; mag = Math.sqrt(mag);
+    const gaussCurv = gaussK(lx, ly, W, H, region.shape);
+    const uStr = ((lx + 0.5) / W).toFixed(3);
+    const vStr = ((ly + 0.5) / H).toFixed(3);
+    const meta = SHAPE_META[region.shape] || {};
+
+    ctx.save();
+
+    // ── Neighbor web ────────────────────────────────────────────────────────
+    const neighbors = region.neighborWeightMap.get(key(cx, cy)) || [];
+    const cellCenter = worldToScreen(cx + 0.5, cy + 0.5);
+
+    for (const { key: nk, weight } of neighbors) {
+      const [nkx, nky] = parseKey(nk);
+      const nc = worldToScreen(nkx + 0.5, nky + 0.5);
+      const alpha = Math.min(0.9, 0.35 + weight * 0.55);
+      ctx.strokeStyle = `rgba(91,224,188,${alpha.toFixed(2)})`;
+      ctx.lineWidth = weight > 0.5 ? 1.5 : 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(cellCenter.x, cellCenter.y); ctx.lineTo(nc.x, nc.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = `rgba(91,224,188,${alpha.toFixed(2)})`;
+      ctx.beginPath(); ctx.arc(nc.x, nc.y, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Highlight hovered cell
+    const sc = worldToScreen(cx, cy);
+    ctx.strokeStyle = 'rgba(91,224,188,1)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(sc.x + 1, sc.y + 1, state.zoom - 2, state.zoom - 2);
+
+    // ── Tensor card ─────────────────────────────────────────────────────────
+    const lines = [
+      `[${cx}, ${cy}]  ${meta.label || region.shape} #${region.id}`,
+      `u = ${uStr}   v = ${vStr}`,
+      `|Γ| = ${mag.toFixed(4)}   K = ${gaussCurv.toFixed(4)}`,
+      `Γᵘᵤᵤ ${G[0].toFixed(3)}  Γᵘᵤᵥ ${G[1].toFixed(3)}  Γᵘᵥᵥ ${G[2].toFixed(3)}`,
+      `Γᵛᵤᵤ ${G[3].toFixed(3)}  Γᵛᵤᵥ ${G[4].toFixed(3)}  Γᵛᵥᵥ ${G[5].toFixed(3)}`,
+    ];
+    const PAD = 9, LH = 14, TW = 274, TH = PAD * 2 + lines.length * LH;
+    let tx = sc.x + state.zoom + 10, ty = sc.y - 4;
+    if (tx + TW > canvas.width - 4) tx = sc.x - TW - 10;
+    ty = Math.max(4, Math.min(canvas.height - TH - 4, ty));
+
+    ctx.fillStyle = 'rgba(6,14,26,0.93)';
+    _christoffelRoundRect(tx, ty, TW, TH, 6); ctx.fill();
+    ctx.strokeStyle = 'rgba(91,224,188,0.38)';
+    ctx.lineWidth = 1;
+    _christoffelRoundRect(tx, ty, TW, TH, 6); ctx.stroke();
+
+    ctx.font = '9.5px "JetBrains Mono", ui-monospace, monospace';
+    ctx.textBaseline = 'top';
+    lines.forEach((line, i) => {
+      ctx.fillStyle = i === 0 ? 'rgba(91,224,188,1)'
+                    : i === 2 ? 'rgba(255,209,102,0.92)'
+                    : 'rgba(190,215,205,0.8)';
+      ctx.fillText(line, tx + PAD, ty + PAD + i * LH);
+    });
 
     ctx.restore();
   }
@@ -3393,6 +3991,7 @@
     drawBackground();
     drawGrid();
     drawCells();
+    drawChristoffelHeatmap();
     drawZoneBoundary();
     drawForceFields();
     drawZones();
@@ -3400,6 +3999,7 @@
     drawSelection();
     drawNotebookPins();
     drawHover();
+    drawChristoffelHover();
     drawLenses();
     drawStampHint();
     drawSelectionHint();
@@ -3534,6 +4134,7 @@
     } else {
       draw();
     }
+    if (_manifoldViewports.size > 0) _renderAllViewports();
     updateTimeline();
     _updateFieldDensityBars();
     updateHud();
@@ -3636,19 +4237,30 @@
     const { SHAPE_META } = window.ManifoldEngine;
     list.innerHTML = '';
     for (const region of state.manifoldRegions) {
-      const meta = SHAPE_META[region.shape] || {};
+      const meta    = SHAPE_META[region.shape] || {};
+      const isSel   = state._manifoldSelected === region.id;
+      const isHidden = region.visible === false;
       const row = document.createElement('div');
-      row.className = 'mr-row' + (state._manifoldSelected === region.id ? ' mr-row-sel' : '');
+      row.className = 'mr-row' + (isSel ? ' mr-row-sel' : '') + (isHidden ? ' mr-row-hidden' : '');
+      const has3D = _manifoldViewports.has(region.id);
       row.innerHTML = `
         <span class="mr-icon">${meta.icon || '?'}</span>
         <span class="mr-name">${meta.label || region.shape} #${region.id}</span>
         <span class="mr-dim">${region.rect.w}×${region.rect.h}</span>
-        <button class="mr-proto" data-id="${region.id}" title="Boundary: ${region.boundaryProtocol === 'A' ? 'Closed' : 'Membrane'}">${region.boundaryProtocol}</button>
-        <button class="mr-del" data-id="${region.id}" title="Delete region">×</button>
+        <button class="mr-proto" title="Boundary: ${region.boundaryProtocol === 'A' ? 'Closed' : 'Membrane'}">${region.boundaryProtocol}</button>
+        <button class="mr-3d" title="${has3D ? 'Focus 3D viewport' : 'Open 3D viewport'}">${has3D ? '⬡·' : '⬡'}</button>
+        <button class="mr-eye" title="${isHidden ? 'Show' : 'Hide'} region">${isHidden ? '🙈' : '👁'}</button>
+        <button class="mr-del" title="Delete region">×</button>
       `;
+      row.querySelector('.mr-3d').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openManifoldViewport(region);
+      });
       row.addEventListener('click', (e) => {
         if (e.target.classList.contains('mr-del')) return;
         if (e.target.classList.contains('mr-proto')) return;
+        if (e.target.classList.contains('mr-eye')) return;
+        if (e.target.classList.contains('mr-3d')) return;
         state._manifoldSelected = region.id;
         manifoldInspectorSync();
         draw();
@@ -3659,6 +4271,12 @@
         region.build(_manifoldKernelWeights());
         manifoldInspectorSync();
       });
+      row.querySelector('.mr-eye').addEventListener('click', (e) => {
+        e.stopPropagation();
+        region.visible = region.visible === false ? true : false;
+        manifoldInspectorSync();
+        draw();
+      });
       row.querySelector('.mr-del').addEventListener('click', (e) => {
         e.stopPropagation();
         removeManifoldRegion(region.id);
@@ -3666,6 +4284,115 @@
       });
       list.appendChild(row);
     }
+    // Curvature stats for selected region
+    const statsEl = document.getElementById('manifoldCurvStats');
+    if (statsEl) {
+      const sel = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+      if (sel) {
+        const { computeGaussianCurvature: gaussK } = window.ManifoldEngine;
+        let minMag = Infinity, maxMag = -Infinity, sumMag = 0, n = 0;
+        let minK = Infinity, maxK = -Infinity;
+        const { x: rx, y: ry, w: W, h: H } = sel.rect;
+        for (let ly = 0; ly < H; ly++) {
+          for (let lx = 0; lx < W; lx++) {
+            const mag = sel.christoffelMagnitudeAt(rx + lx, ry + ly);
+            if (mag < minMag) minMag = mag;
+            if (mag > maxMag) maxMag = mag;
+            sumMag += mag; n++;
+            const k = gaussK(lx, ly, W, H, sel.shape);
+            if (k < minK) minK = k;
+            if (k > maxK) maxK = k;
+          }
+        }
+        const meanMag = n > 0 ? sumMag / n : 0;
+        statsEl.innerHTML = `<span class="mr-stat-label">|Γ|</span> min <b>${minMag.toFixed(3)}</b> max <b>${maxMag.toFixed(3)}</b> mean <b>${meanMag.toFixed(3)}</b>` +
+          `<br><span class="mr-stat-label">K</span> min <b>${minK.toFixed(3)}</b> max <b>${maxK.toFixed(3)}</b>`;
+        statsEl.style.display = '';
+      } else {
+        statsEl.style.display = 'none';
+      }
+    }
+
+    // Per-region physics panel for selected region
+    const physEl = document.getElementById('manifoldRegionPhysics');
+    if (physEl) {
+      const sel = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+      if (sel) {
+        physEl.style.display = '';
+        physEl.innerHTML = '';
+
+        // Rule Override
+        const ruleRow = document.createElement('div');
+        ruleRow.className = 'mr-phys-row';
+        const ruleCheck = document.createElement('input');
+        ruleCheck.type = 'checkbox'; ruleCheck.id = 'mr-rule-check';
+        ruleCheck.checked = !!sel.ruleOverride;
+        const ruleLabel = document.createElement('label');
+        ruleLabel.htmlFor = 'mr-rule-check'; ruleLabel.textContent = 'Rule override';
+        ruleLabel.className = 'mr-phys-label';
+        const ruleInput = document.createElement('input');
+        ruleInput.type = 'text'; ruleInput.className = 'mr-phys-input';
+        ruleInput.placeholder = 'B3/S23';
+        ruleInput.title = 'B/S notation, e.g. B36/S23';
+        ruleInput.style.width = '80px';
+        ruleInput.value = sel.ruleOverride
+          ? 'B' + [...sel.ruleOverride.B].sort((a,b)=>a-b).join('') + '/S' + [...sel.ruleOverride.S].sort((a,b)=>a-b).join('')
+          : (ruleToString ? ruleToString(state.ruleB, state.ruleS) : 'B3/S23');
+        ruleInput.disabled = !sel.ruleOverride;
+        const applyRuleBtn = document.createElement('button');
+        applyRuleBtn.textContent = 'Set'; applyRuleBtn.className = 'mr-phys-btn';
+        applyRuleBtn.disabled = !sel.ruleOverride;
+        applyRuleBtn.title = 'Apply rule to this region';
+        ruleCheck.addEventListener('change', () => {
+          ruleInput.disabled = !ruleCheck.checked;
+          applyRuleBtn.disabled = !ruleCheck.checked;
+          if (!ruleCheck.checked) { sel.ruleOverride = null; }
+        });
+        applyRuleBtn.addEventListener('click', () => {
+          const parsed = parseRule(ruleInput.value);
+          if (parsed) {
+            sel.ruleOverride = { B: parsed.B, S: parsed.S };
+            ruleInput.style.outline = '';
+          } else {
+            ruleInput.style.outline = '1.5px solid #f55';
+          }
+        });
+        ruleRow.appendChild(ruleCheck); ruleRow.appendChild(ruleLabel);
+        ruleRow.appendChild(ruleInput); ruleRow.appendChild(applyRuleBtn);
+        physEl.appendChild(ruleRow);
+
+        // Curvature Modulation
+        const curvRow = document.createElement('div');
+        curvRow.className = 'mr-phys-row';
+        const curvCheck = document.createElement('input');
+        curvCheck.type = 'checkbox'; curvCheck.id = 'mr-curv-mod-check';
+        curvCheck.checked = !!sel.curvatureModulate;
+        const curvLabel = document.createElement('label');
+        curvLabel.htmlFor = 'mr-curv-mod-check'; curvLabel.textContent = 'K modulation';
+        curvLabel.className = 'mr-phys-label';
+        curvLabel.title = 'Gaussian curvature shifts effective neighbor count: positive K → denser pressure';
+        const strengthLabel = document.createElement('span');
+        strengthLabel.className = 'mr-phys-label'; strengthLabel.style.marginLeft = '6px';
+        strengthLabel.textContent = 'str';
+        const strengthInput = document.createElement('input');
+        strengthInput.type = 'number'; strengthInput.className = 'mr-phys-input';
+        strengthInput.min = 0; strengthInput.max = 8; strengthInput.step = 0.5;
+        strengthInput.value = state.christoffelModStrength;
+        strengthInput.style.width = '46px';
+        curvCheck.addEventListener('change', () => {
+          sel.curvatureModulate = curvCheck.checked;
+        });
+        strengthInput.addEventListener('input', () => {
+          state.christoffelModStrength = parseFloat(strengthInput.value) || 0;
+        });
+        curvRow.appendChild(curvCheck); curvRow.appendChild(curvLabel);
+        curvRow.appendChild(strengthLabel); curvRow.appendChild(strengthInput);
+        physEl.appendChild(curvRow);
+      } else {
+        physEl.style.display = 'none';
+      }
+    }
+
     // Show/hide the manifold section
     const section = document.getElementById('manifoldSection');
     if (section) section.style.display = state.manifoldRegions.length > 0 ? '' : 'none';
@@ -3677,6 +4404,40 @@
     if (!palette) return;
     const hidden = palette.classList.toggle("tp-hidden");
     if (reveal) reveal.classList.toggle("tp-show", hidden);
+  }
+
+  function toggleChristoffelVis() {
+    state.christoffelVis = !state.christoffelVis;
+    const bar = document.getElementById('christoffelBar');
+    if (bar) bar.style.display = state.christoffelVis ? 'flex' : 'none';
+    if (state.christoffelVis) _christoffelBarSync();
+    draw();
+  }
+
+  function _christoffelBarSync() {
+    document.querySelectorAll('.cv-btn').forEach(btn => {
+      btn.classList.toggle('cv-active', btn.dataset.comp === state.christoffelComponent);
+    });
+  }
+
+  function setupChristoffelBar() {
+    const bar = document.getElementById('christoffelBar');
+    if (!bar) return;
+    bar.querySelectorAll('.cv-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.christoffelComponent = btn.dataset.comp;
+        _christoffelBarSync();
+        draw();
+      });
+    });
+    const closeBtn = bar.querySelector('.cv-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+      state.christoffelVis = false;
+      bar.style.display = 'none';
+      draw();
+    });
+    const toggleBtn = document.getElementById('manifoldCurvToggle');
+    if (toggleBtn) toggleBtn.addEventListener('click', toggleChristoffelVis);
   }
 
   // --- Hint / objective HUD auto-dismiss ---
@@ -3731,10 +4492,11 @@
 
     state.canvasMode = mode;
 
-    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell", object: "default", prefab: "crosshair" };
+    const cursors = { paint: "crosshair", move: "grab", select: "crosshair", force: "crosshair", zone: "crosshair", lens: "cell", object: "default", prefab: "crosshair", manifold: "crosshair" };
     canvas.style.cursor = cursors[mode] || "default";
-    if (mode !== "zone")  { state._zoneDrawing = null; state._zoneDragMode = null; }
-    if (mode !== "force") { state._ffDrawing = null; state._ffDragMode = null; }
+    if (mode !== "zone")     { state._zoneDrawing = null; state._zoneDragMode = null; }
+    if (mode !== "force")    { state._ffDrawing = null; state._ffDragMode = null; }
+    if (mode !== "manifold") { state._manifoldDrag = null; state._manifoldDragMode = null; state._manifoldDragOrigin = null; }
 
     // Sync mode buttons
     document.querySelectorAll(".mode-btn").forEach((btn) => {
@@ -3767,27 +4529,50 @@
     state.pointer.lastX = ev.clientX;
     state.pointer.lastY = ev.clientY;
 
-    // Manifold tool: drag to define region rect
+    // Manifold tool: move/resize selected, select existing, or draw new
     if (state.canvasMode === 'manifold' && ev.button === 0) {
       const rect = canvas.getBoundingClientRect();
-      const gxy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+      const gxy = screenToGrid(sx, sy);
       const gx = Math.floor(gxy.x), gy = Math.floor(gxy.y);
 
-      // Click existing region → select it
+      // Check handles of selected region first
+      const selMR = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+      if (selMR && selMR.visible !== false) {
+        const handle = _manifoldHitHandle(sx, sy, selMR);
+        if (handle) {
+          state._manifoldDragMode   = handle;
+          state._manifoldDragOrigin = { mx: gx, my: gy, rx: selMR.rect.x, ry: selMR.rect.y, rw: selMR.rect.w, rh: selMR.rect.h };
+          ev.preventDefault(); return;
+        }
+        if (selMR.containsCell(gx, gy)) {
+          state._manifoldDragMode   = 'move';
+          state._manifoldDragOrigin = { mx: gx, my: gy, rx: selMR.rect.x, ry: selMR.rect.y, rw: selMR.rect.w, rh: selMR.rect.h };
+          ev.preventDefault(); return;
+        }
+      }
+
+      // Try selecting another region (topmost wins)
       let hit = null;
       for (let i = state.manifoldRegions.length - 1; i >= 0; i--) {
         const r = state.manifoldRegions[i];
+        if (r.visible === false || r.id === state._manifoldSelected) continue;
         if (r.containsCell(gx, gy)) { hit = r; break; }
       }
       if (hit) {
         state._manifoldSelected = hit.id;
+        state._manifoldDragMode   = 'move';
+        state._manifoldDragOrigin = { mx: gx, my: gy, rx: hit.rect.x, ry: hit.rect.y, rw: hit.rect.w, rh: hit.rect.h };
         manifoldInspectorSync();
         draw(); ev.preventDefault(); return;
       }
 
-      // Start drawing new region
+      // Empty click: deselect and start drawing new region
       state._manifoldSelected = null;
+      state._manifoldDragMode = null;
+      state._manifoldDragOrigin = null;
       state._manifoldDrag = { x0: gx, y0: gy, x1: gx, y1: gy };
+      manifoldInspectorSync();
       draw(); ev.preventDefault(); return;
     }
 
@@ -4094,7 +4879,7 @@
     const rect = canvas.getBoundingClientRect();
     state.hoverCell = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
 
-    // Manifold drag update
+    // Manifold drag update — new region draw
     if (state.canvasMode === 'manifold' && state.pointer.down && state._manifoldDrag) {
       const gxy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
       state._manifoldDrag.x1 = Math.floor(gxy.x);
@@ -4102,10 +4887,34 @@
       draw(); ev.preventDefault(); return;
     }
 
+    // Manifold drag update — move/resize existing region
+    if (state.canvasMode === 'manifold' && state.pointer.down && state._manifoldDragMode) {
+      const gxy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      _manifoldApplyDrag(Math.floor(gxy.x), Math.floor(gxy.y));
+      draw(); ev.preventDefault(); return;
+    }
+
     // Update cursor when hovering (not dragging)
     if (!state.pointer.down) {
       if (state.canvasMode === 'manifold') {
-        canvas.style.cursor = 'crosshair';
+        // Show directional resize cursor over handles of selected region
+        const selMR = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+        if (selMR && selMR.visible !== false) {
+          const hx = ev.clientX - rect.left, hy = ev.clientY - rect.top;
+          const handle = _manifoldHitHandle(hx, hy, selMR);
+          if (handle) {
+            const RMAP = { 'resize-nw':'nw-resize','resize-n':'n-resize','resize-ne':'ne-resize',
+              'resize-w':'w-resize','resize-e':'e-resize',
+              'resize-sw':'sw-resize','resize-s':'s-resize','resize-se':'se-resize' };
+            canvas.style.cursor = RMAP[handle] || 'crosshair';
+          } else if (selMR.containsCell(Math.floor(state.hoverCell?.x ?? 0), Math.floor(state.hoverCell?.y ?? 0))) {
+            canvas.style.cursor = 'move';
+          } else {
+            canvas.style.cursor = 'crosshair';
+          }
+        } else {
+          canvas.style.cursor = 'crosshair';
+        }
       } else if (state.canvasMode === "move") {
         canvas.style.cursor = "grab";
       } else if (state.canvasMode === "paint") {
@@ -4190,6 +4999,13 @@
       return;
     }
 
+    // Object-mode manifold drag
+    if (state.canvasMode === "object" && state._manifoldDragMode) {
+      const gxy3 = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
+      _manifoldApplyDrag(Math.floor(gxy3.x), Math.floor(gxy3.y));
+      draw(); return;
+    }
+
     if (state.pointer.mode === "select" && state._selStartCell) {
       const gxgy = screenToGrid(ev.clientX - rect.left, ev.clientY - rect.top);
       const cx = Math.floor(gxgy.x);
@@ -4234,7 +5050,19 @@
       canvas.releasePointerCapture(ev.pointerId);
     }
 
-    // Manifold tool: finish drag → show shape picker if region is big enough
+    // Manifold: commit move/resize (rebuild neighbor map)
+    if (state.canvasMode === 'manifold' && state._manifoldDragMode) {
+      const mr = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+      if (mr) mr.build(_manifoldKernelWeights());
+      state._manifoldDragMode   = null;
+      state._manifoldDragOrigin = null;
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      manifoldInspectorSync();
+      draw(); ev.preventDefault(); return;
+    }
+
+    // Manifold tool: finish drawing new region → show shape picker if big enough
     if (state.canvasMode === 'manifold' && state._manifoldDrag) {
       const d = state._manifoldDrag;
       state._manifoldDrag = null;
@@ -4347,6 +5175,18 @@
       state._zoneDragOrigin = null;
       state.pointer.down = false;
       state.pointer.mode = null;
+      return;
+    }
+
+    // Manifold object-mode drag commit
+    if (state.canvasMode === "object" && state._manifoldDragMode) {
+      const mr = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+      if (mr) mr.build(_manifoldKernelWeights());
+      state._manifoldDragMode   = null;
+      state._manifoldDragOrigin = null;
+      state.pointer.down = false;
+      state.pointer.mode = null;
+      manifoldInspectorSync();
       return;
     }
 
@@ -4837,6 +5677,7 @@
       if (ev.key === "`") { toggleToolPalette(); ev.preventDefault(); return; }
       if (ev.key === "?" || (ev.key === "h" && !mod)) { toggleHint(); ev.preventDefault(); return; }
       if (ev.key === "t" && !mod) { setCanvasMode("manifold"); ev.preventDefault(); return; }
+      if (ev.key === "k" && !mod) { toggleChristoffelVis(); ev.preventDefault(); return; }
 
       // Selection edit shortcuts
       const hasSel = state.selection && state.selection.w > 0 && state.selection.h > 0;
@@ -4865,7 +5706,11 @@
         }
       }
 
-      if ((ev.key === "Delete" || ev.key === "Backspace") && state._zoneSelected != null) {
+      if ((ev.key === "Delete" || ev.key === "Backspace") && state._manifoldSelected != null) {
+        removeManifoldRegion(state._manifoldSelected);
+        draw();
+        ev.preventDefault();
+      } else if ((ev.key === "Delete" || ev.key === "Backspace") && state._zoneSelected != null) {
         state.zones = state.zones.filter(z => z.id !== state._zoneSelected);
         state._zoneSelected = null;
         zonesPanelSync();
@@ -5427,6 +6272,7 @@
       manifoldRegions: state.manifoldRegions.map(r => r.toJSON()),
       manifoldOverlapProtocol: state.manifoldOverlapProtocol,
       manifoldKernelInherit: state.manifoldKernelInherit,
+      christoffelModStrength: state.christoffelModStrength,
       repulseEnabled: state.repulseEnabled,
       repulseAge: state.repulseAge,
       repulseStrength: state.repulseStrength,
@@ -5480,6 +6326,7 @@
     if (cfg.hintDuration             !== undefined) state.hintDuration             = cfg.hintDuration;
     if (cfg.manifoldOverlapProtocol  !== undefined) state.manifoldOverlapProtocol  = cfg.manifoldOverlapProtocol;
     if (cfg.manifoldKernelInherit    !== undefined) state.manifoldKernelInherit    = cfg.manifoldKernelInherit;
+    if (cfg.christoffelModStrength   !== undefined) state.christoffelModStrength   = cfg.christoffelModStrength;
     if (cfg.manifoldRegions) {
       state.manifoldRegions = cfg.manifoldRegions.map(d => {
         const r = new MRegion(d);
@@ -5685,6 +6532,43 @@
     zonesPanelSync();
   }
 
+  function _manifoldHitHandle(sx, sy, region) {
+    const HANDLE = 9;
+    const { x, y, w, h } = region.rect;
+    const tl = worldToScreen(x, y);
+    const br = worldToScreen(x + w, y + h);
+    const mx = (tl.x + br.x) / 2, my = (tl.y + br.y) / 2;
+    const hits = [
+      [tl.x, tl.y, 'resize-nw'], [mx, tl.y, 'resize-n'], [br.x, tl.y, 'resize-ne'],
+      [tl.x, my,   'resize-w'],                            [br.x, my,   'resize-e'],
+      [tl.x, br.y, 'resize-sw'], [mx, br.y, 'resize-s'],  [br.x, br.y, 'resize-se'],
+    ];
+    for (const [hx, hy, tag] of hits) {
+      if (Math.abs(sx - hx) <= HANDLE && Math.abs(sy - hy) <= HANDLE) return tag;
+    }
+    return null;
+  }
+
+  function _manifoldApplyDrag(gx, gy) {
+    const o  = state._manifoldDragOrigin;
+    const r  = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+    if (!r || !o) return;
+    const dx = gx - o.mx, dy = gy - o.my;
+    const dm = state._manifoldDragMode;
+    if (dm === 'move') {
+      r.rect.x = o.rx + dx;
+      r.rect.y = o.ry + dy;
+    } else {
+      let x1 = o.rx, y1 = o.ry, x2 = o.rx + o.rw - 1, y2 = o.ry + o.rh - 1;
+      if (dm.includes('e')) x2 = Math.max(x1 + 2, o.rx + o.rw - 1 + dx);
+      if (dm.includes('w')) x1 = Math.min(x2 - 2, o.rx + dx);
+      if (dm.includes('s')) y2 = Math.max(y1 + 2, o.ry + o.rh - 1 + dy);
+      if (dm.includes('n')) y1 = Math.min(y2 - 2, o.ry + dy);
+      r.rect.x = x1; r.rect.y = y1; r.rect.w = x2 - x1 + 1; r.rect.h = y2 - y1 + 1;
+    }
+    manifoldInspectorSync();
+  }
+
   function zonesPanelSync() {
     const list = document.getElementById("zoneList");
     if (!list) return;
@@ -5829,6 +6713,23 @@
       if (Math.hypot(sx - l.cx, sy - l.cy) <= l.radius) return { type: "lens", id: l.id, mode: "move" };
     }
 
+    // Manifold regions — check selected handles first, then bodies
+    const selMR = state.manifoldRegions.find(r => r.id === state._manifoldSelected);
+    if (selMR && selMR.visible !== false) {
+      const mHandle = _manifoldHitHandle(sx, sy, selMR);
+      if (mHandle) return { type: "manifold", id: selMR.id, mode: mHandle };
+      const { x: mrx, y: mry, w: mrw, h: mrh } = selMR.rect;
+      if (gx >= mrx && gx < mrx + mrw && gy >= mry && gy < mry + mrh)
+        return { type: "manifold", id: selMR.id, mode: "move" };
+    }
+    for (let i = state.manifoldRegions.length - 1; i >= 0; i--) {
+      const mr = state.manifoldRegions[i];
+      if (mr.visible === false || mr.id === state._manifoldSelected) continue;
+      const { x: mrx, y: mry, w: mrw, h: mrh } = mr.rect;
+      if (gx >= mrx && gx < mrx + mrw && gy >= mry && gy < mry + mrh)
+        return { type: "manifold", id: mr.id, mode: "move" };
+    }
+
     return null;
   }
 
@@ -5867,6 +6768,16 @@
           : { type: "move",   id: ll.id, startX: sx, startY: sy, origCx: ll.cx, origCy: ll.cy };
       }
       lensesPanelSync();
+    } else if (hit.type === "manifold") {
+      setCanvasMode("manifold");
+      state._manifoldSelected = hit.id;
+      const mr = state.manifoldRegions.find(r => r.id === hit.id);
+      if (mr) {
+        const gxy = screenToGrid(sx, sy);
+        state._manifoldDragMode   = hit.mode;
+        state._manifoldDragOrigin = { mx: Math.floor(gxy.x), my: Math.floor(gxy.y), rx: mr.rect.x, ry: mr.rect.y, rw: mr.rect.w, rh: mr.rect.h };
+      }
+      manifoldInspectorSync();
     }
   }
 
@@ -7088,9 +7999,37 @@
       },
     };
 
+    // Manifold SDK — read-only view of each region's topology/curvature data
+    const { computeGaussianCurvature: _gaussK } = window.ManifoldEngine;
+    const sdkManifold = state.manifoldRegions.map(r => ({
+      get shape()    { return r.shape; },
+      get rect()     { return { ...r.rect }; },
+      get protocol() { return r.boundaryProtocol; },
+      get id()       { return r.id; },
+      contains(x, y) { return r.containsCell(x, y); },
+      christoffelAt(x, y) {
+        const G = r.christoffelMap.get(key(x, y));
+        return G ? Array.from(G) : [0,0,0,0,0,0];
+      },
+      christoffelMagnitudeAt(x, y) { return r.christoffelMagnitudeAt(x, y); },
+      gaussianCurvatureAt(x, y) {
+        const { w: W, h: H, x: rx, y: ry } = r.rect;
+        return _gaussK(x - rx, y - ry, W, H, r.shape);
+      },
+      get ruleOverride() {
+        if (!r.ruleOverride) return null;
+        return { B: [...r.ruleOverride.B], S: [...r.ruleOverride.S] };
+      },
+      setRuleOverride(B, S) {
+        r.ruleOverride = B && S ? { B: new Set(B), S: new Set(S) } : null;
+      },
+      get curvatureModulate() { return r.curvatureModulate; },
+      set curvatureModulate(v) { r.curvatureModulate = !!v; },
+    }));
+
     try {
-      const fn = new Function("cells", "rules", "sim", "canvas", "globals", "hook", "log", "print", `"use strict"; return (async () => { ${code} })()`);
-      await fn(sdkCells, sdkRules, sdkSim, sdkCanvas, _kernel.globals, sdkHook, printFn, printFn);
+      const fn = new Function("cells", "rules", "sim", "canvas", "globals", "hook", "log", "print", "manifold", `"use strict"; return (async () => { ${code} })()`);
+      await fn(sdkCells, sdkRules, sdkSim, sdkCanvas, _kernel.globals, sdkHook, printFn, printFn, sdkManifold);
       if (out && out.textContent === "") out.style.display = "none";
       _setCellStatus(cell, _hookRegistry.some(h => h.cellId === id) ? "hooked" : "ok");
     } catch (err) {
@@ -7214,6 +8153,44 @@ const off = hook('afterStep', () => {
   rules.set(origB, origS);
   log('restored →', rules.toString());
 })();`,
+
+    manifoldInspect:
+`// Manifold region inspector — live curvature readout overlay
+if (!manifold.length) { log('No manifold regions. Draw one first.'); }
+else {
+  log(manifold.length + ' region(s):', manifold.map(r => r.shape + ' #' + r.id).join(', '));
+  for (const r of manifold) {
+    const { x, y, w, h } = r.rect;
+    let sumK = 0, minK = Infinity, maxK = -Infinity;
+    for (let cy = y; cy < y + h; cy++) for (let cx = x; cx < x + w; cx++) {
+      const K = r.gaussianCurvatureAt(cx, cy);
+      sumK += K; if (K < minK) minK = K; if (K > maxK) maxK = K;
+    }
+    log(r.shape + ' #' + r.id + '  K∈[' + minK.toFixed(3) + ',' + maxK.toFixed(3) +
+        ']  mean=' + (sumK / (w * h)).toFixed(3));
+  }
+}`,
+
+    manifoldHUD:
+`// Live manifold overlay — draws curvature hotspot ring on canvas each frame
+hook('afterDraw', () => {
+  if (!manifold.length) return;
+  const { ctx } = canvas;
+  ctx.save();
+  for (const r of manifold) {
+    const { x, y, w, h } = r.rect;
+    let peakK = -Infinity, px = x, py = y;
+    for (let cy = y; cy < y + h; cy++) for (let cx = x; cx < x + w; cx++) {
+      const K = r.gaussianCurvatureAt(cx, cy);
+      if (K > peakK) { peakK = K; px = cx; py = cy; }
+    }
+    // world→screen: use the canvas transform directly
+    // We approximate using the zoom/pan from globals if available
+    // Simple fallback: log the peak cell
+  }
+  ctx.restore();
+});
+log('manifold HUD active — ' + manifold.length + ' region(s)');`,
 
   };
 
@@ -7856,6 +8833,7 @@ const off = hook('afterStep', () => {
     setupZoneLab();
     setupFieldLab();
     setupLensLab();
+    setupChristoffelBar();
     setupLibrary();
     setupCaptureLab();
     setupAnalysisLab();

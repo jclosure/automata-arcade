@@ -83,6 +83,22 @@
               <button id="shapePickerCancel" class="sp-cancel">Cancel</button>
             </div>
 
+            <!-- Christoffel / curvature visualization controls (K to toggle) -->
+            <div id="christoffelBar" class="christoffel-bar" style="display:none">
+              <span class="cv-label">∇ CURV</span>
+              <button class="cv-btn cv-active" data-comp="magnitude" title="Magnitude |Γ|">|Γ|</button>
+              <button class="cv-btn" data-comp="gaussian" title="Gaussian curvature K">K</button>
+              <span class="cv-sep">·</span>
+              <button class="cv-btn" data-comp="G0" title="Γᵘᵤᵤ">Γᵘᵤᵤ</button>
+              <button class="cv-btn" data-comp="G1" title="Γᵘᵤᵥ">Γᵘᵤᵥ</button>
+              <button class="cv-btn" data-comp="G2" title="Γᵘᵥᵥ">Γᵘᵥᵥ</button>
+              <button class="cv-btn" data-comp="G3" title="Γᵛᵤᵤ">Γᵛᵤᵤ</button>
+              <button class="cv-btn" data-comp="G4" title="Γᵛᵤᵥ">Γᵛᵤᵥ</button>
+              <button class="cv-btn" data-comp="G5" title="Γᵛᵥᵥ">Γᵛᵥᵥ</button>
+              <span class="cv-sep">·</span>
+              <button class="cv-close" title="Close  K">×</button>
+            </div>
+
             <div id="overlayMessage" class="overlay hidden"></div>
             <div id="timelineBar" class="tl-bar">
               <div class="tl-btns">
@@ -163,6 +179,9 @@
                 <div id="manifoldSection" style="display:none">
                   <h3 class="lab-heading">⬡ Manifold Regions</h3>
                   <div id="manifoldRegionList" class="mr-list"></div>
+                  <div id="manifoldCurvStats" class="mr-curv-stats" style="display:none"></div>
+                  <div id="manifoldRegionPhysics" class="mr-physics-panel" style="display:none"></div>
+                  <button id="manifoldCurvToggle" class="rl-apply" style="width:100%;margin-top:4px;font-size:10px" title="Toggle curvature heatmap  K">∇ Curvature Vis (K)</button>
                 </div>
 
                 <h3 class="lab-heading">Rule Lab</h3>
@@ -578,6 +597,10 @@
                 </optgroup>
                 <optgroup label="Research">
                   <option value="ruleExplore">rule explorer</option>
+                </optgroup>
+                <optgroup label="Manifold">
+                  <option value="manifoldInspect">curvature inspector</option>
+                  <option value="manifoldHUD">manifold HUD</option>
                 </optgroup>
               </select>
               <button class="sc-btn" id="scriptClearHooks" title="Pause / resume all hooks">⊘ Hooks</button>
