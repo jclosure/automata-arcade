@@ -4340,6 +4340,24 @@
       return id;
     };
 
+    const fitDemoCamera = () => {
+      // Demo content bounds in world cells. Center this in the actual visible CSS viewport.
+      // worldToScreen currently uses the backing-store canvas size, so account for DPR here.
+      const bounds = { left: 8, top: 6, right: 252, bottom: 206 };
+      const w = bounds.right - bounds.left;
+      const h = bounds.bottom - bounds.top;
+      const cssW = canvas.clientWidth || canvas.width;
+      const cssH = canvas.clientHeight || canvas.height;
+      const targetW = Math.max(420, cssW - 120);
+      const targetH = Math.max(300, cssH - 230);
+      const z = Math.max(2.2, Math.min(3.45, Math.min(targetW / w, targetH / h)));
+      const cx = (bounds.left + bounds.right) / 2;
+      const cy = (bounds.top + bounds.bottom) / 2;
+      state.zoom = z;
+      state.cameraX = cx + (canvas.width - cssW) / (2 * z);
+      state.cameraY = cy + (canvas.height - cssH) / (2 * z);
+    };
+
     state.mode = "sandbox";
     modeSelect.value = "sandbox";
     canvas.style.display = "block";
@@ -4347,9 +4365,6 @@
     clearBoard();
     state.running = false;
     document.getElementById("playBtn").textContent = "Play";
-    state.zoom = 3.4;
-    state.cameraX = 260;
-    state.cameraY = 230;
     state.zones = [];
     state.forceFields = [];
     state.lenses = [];
@@ -4432,6 +4447,7 @@
     seedFromPattern("pinwheel-seed", 206, 184);
 
     // No altered physics here: the demo is pure B3/S23 Life, just arranged as circuitry.
+    fitDemoCamera();
 
     snapshotNow();
     zonesPanelSync();
