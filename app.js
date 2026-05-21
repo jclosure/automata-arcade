@@ -4354,8 +4354,11 @@
       const cx = (bounds.left + bounds.right) / 2;
       const cy = (bounds.top + bounds.bottom) / 2;
       state.zoom = z;
-      state.cameraX = cx + (canvas.width - cssW) / (2 * z);
-      state.cameraY = cy + (canvas.height - cssH) / (2 * z);
+      // Empirically, drawing coordinates are already CSS-space after ctx scaling;
+      // use only a partial backing-store correction so the demo centers in the
+      // visible viewport instead of drifting into the upper-left.
+      state.cameraX = cx + (canvas.width - cssW) / (2.0 * z);
+      state.cameraY = cy + (canvas.height - cssH) / (1.8 * z);
     };
 
     state.mode = "sandbox";
