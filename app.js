@@ -4146,27 +4146,182 @@
   }
 
   function loadDemo() {
-    clearBoard();
+    const GLYPHS = {
+      " ": ["00000","00000","00000","00000","00000","00000","00000"],
+      "0": ["01110","10001","10011","10101","11001","10001","01110"],
+      "1": ["00100","01100","00100","00100","00100","00100","01110"],
+      "2": ["01110","10001","00001","00010","00100","01000","11111"],
+      "3": ["11110","00001","00001","01110","00001","00001","11110"],
+      "4": ["00010","00110","01010","10010","11111","00010","00010"],
+      "5": ["11111","10000","10000","11110","00001","00001","11110"],
+      "6": ["00110","01000","10000","11110","10001","10001","01110"],
+      "7": ["11111","00001","00010","00100","01000","01000","01000"],
+      "8": ["01110","10001","10001","01110","10001","10001","01110"],
+      "9": ["01110","10001","10001","01111","00001","00010","01100"],
+      "A": ["01110","10001","10001","11111","10001","10001","10001"],
+      "B": ["11110","10001","10001","11110","10001","10001","11110"],
+      "C": ["01111","10000","10000","10000","10000","10000","01111"],
+      "D": ["11110","10001","10001","10001","10001","10001","11110"],
+      "E": ["11111","10000","10000","11110","10000","10000","11111"],
+      "F": ["11111","10000","10000","11110","10000","10000","10000"],
+      "G": ["01111","10000","10000","10011","10001","10001","01111"],
+      "H": ["10001","10001","10001","11111","10001","10001","10001"],
+      "I": ["01110","00100","00100","00100","00100","00100","01110"],
+      "J": ["00111","00010","00010","00010","00010","10010","01100"],
+      "K": ["10001","10010","10100","11000","10100","10010","10001"],
+      "L": ["10000","10000","10000","10000","10000","10000","11111"],
+      "M": ["10001","11011","10101","10101","10001","10001","10001"],
+      "N": ["10001","11001","10101","10011","10001","10001","10001"],
+      "O": ["01110","10001","10001","10001","10001","10001","01110"],
+      "P": ["11110","10001","10001","11110","10000","10000","10000"],
+      "Q": ["01110","10001","10001","10001","10101","10010","01101"],
+      "R": ["11110","10001","10001","11110","10100","10010","10001"],
+      "S": ["01111","10000","10000","01110","00001","00001","11110"],
+      "T": ["11111","00100","00100","00100","00100","00100","00100"],
+      "U": ["10001","10001","10001","10001","10001","10001","01110"],
+      "V": ["10001","10001","10001","10001","10001","01010","00100"],
+      "W": ["10001","10001","10001","10101","10101","10101","01010"],
+      "X": ["10001","10001","01010","00100","01010","10001","10001"],
+      "Y": ["10001","10001","01010","00100","00100","00100","00100"],
+      "Z": ["11111","00001","00010","00100","01000","10000","11111"],
+      "-": ["00000","00000","00000","11111","00000","00000","00000"],
+      ">": ["10000","01000","00100","00010","00100","01000","10000"],
+    };
+
+    const drawCellText = (text, x, y, scale = 1) => {
+      let ox = x;
+      for (const rawCh of text.toUpperCase()) {
+        const glyph = GLYPHS[rawCh] || GLYPHS[" "];
+        for (let gy = 0; gy < glyph.length; gy++) {
+          for (let gx = 0; gx < glyph[gy].length; gx++) {
+            if (glyph[gy][gx] === "1") {
+              for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) {
+                setCell(ox + gx * scale + sx, y + gy * scale + sy, true);
+              }
+            }
+          }
+        }
+        ox += 6 * scale;
+      }
+    };
+
+    const addZone = (name, x, y, w, h, color, B = [3], S = [2, 3]) => {
+      const id = ++state._zoneIdSeq;
+      state.zones.push({ id, x, y, w, h, name, color, ruleB: new Set(B), ruleS: new Set(S), visible: true, combine: false });
+      return id;
+    };
+
+    const addLens = (name, cx, cy, radius, zoom = 4) => {
+      const id = ++_lensIdSeq;
+      state.lenses.push({ id, name, cx, cy, radius, zoom, visible: true });
+      return id;
+    };
+
     state.mode = "sandbox";
     modeSelect.value = "sandbox";
     canvas.style.display = "block";
     sphereCanvas.style.display = "none";
-    state.cameraX = 90;
-    state.cameraY = 45;
+    clearBoard();
+    state.running = false;
+    document.getElementById("playBtn").textContent = "Play";
+    state.zoom = 3.8;
+    state.cameraX = 228;
+    state.cameraY = 188;
+    state.zones = [];
+    state.forceFields = [];
+    state.lenses = [];
+    state._zoneSelected = null;
+    state._ffSelected = null;
+    state._lensSelected = null;
+    state.ruleB = new Set([3]);
+    state.ruleS = new Set([2, 3]);
+    state._ruleDirty = true;
 
-    seedFromPattern("gosper", 32, 30);
-    seedFromPattern("gosper", 112, 61, { rotate: 180 });
-    seedFromPattern("lwss", 78, 67);
-    seedFromPattern("glider", 60, 21);
-    seedFromPattern("glider", 64, 24);
-    seedFromPattern("glider", 67, 27);
-    seedFromPattern("eater1", 102, 35);
-    seedFromPattern("beacon", 92, 51);
-    seedFromPattern("pinwheel-seed", 84, 41);
-    seedFromPattern("spark-crab", 108, 49);
+    // Title / legend as live matter. It will mutate if the user presses Play.
+    drawCellText("TURING COMPLETE", 34, 6, 1);
+    drawCellText("CLOCKS  GATES  MEMORY  ROUTING", 38, 18, 1);
+
+    // Soft lab panels: normal Life, but labelled as conceptual circuit regions.
+    addZone("CLOCK BUS — p30 glider guns", 8, 30, 86, 56, "#5be0bc");
+    addZone("NOT — annihilation gate", 100, 48, 70, 52, "#e05b7a");
+    addZone("ROUTER — collision turns", 176, 45, 70, 58, "#f2b84b");
+    addZone("MEMORY — stable state bank", 58, 112, 78, 50, "#9b7be8");
+    addZone("OUTPUT TAP — reusable signal", 150, 116, 98, 48, "#5bc4e0");
+    addZone("SEARCH ECOLOGY", 30, 174, 194, 32, "#6bffa9");
+
+    // Clock sources: period-30 glider guns aimed into the board from multiple phases.
+    seedFromPattern("gosper", 18, 38);
+    seedFromPattern("gosper", 18, 80);
+    seedFromPattern("gosper", 216, 44, { rotate: 180 });
+    seedFromPattern("gosper", 216, 86, { rotate: 180 });
+    seedFromPattern("gosper", 112, 136, { rotate: 270 });
+
+    // Signal packets / paths. These are deliberately visible as data flowing through a substrate.
+    seedFromPattern("signal-train", 72, 52);
+    seedFromPattern("signal-train", 74, 84);
+    seedFromPattern("signal-train", 164, 54, { rotate: 180 });
+    seedFromPattern("signal-train", 164, 92, { rotate: 180 });
+    seedFromPattern("glider", 96, 44);
+    seedFromPattern("glider", 104, 52);
+    seedFromPattern("glider", 112, 60);
+    seedFromPattern("glider", 150, 62, { rotate: 180 });
+    seedFromPattern("glider", 142, 70, { rotate: 180 });
+    seedFromPattern("glider", 134, 78, { rotate: 180 });
+
+    // Gates and routing collisions.
+    seedFromPattern("annihilator", 119, 65);
+    seedFromPattern("annihilator", 131, 77, { rotate: 180 });
+    seedFromPattern("turn-gate", 188, 64);
+    seedFromPattern("turn-gate", 206, 76, { rotate: 90 });
+    seedFromPattern("herschel", 178, 94);
+
+    // Absorbers / terminators: demonstrate clean signal handling.
+    seedFromPattern("eater1", 90, 38);
+    seedFromPattern("eater1", 92, 99, { rotate: 90 });
+    seedFromPattern("eater1", 246, 56, { rotate: 180 });
+    seedFromPattern("eater1", 242, 106, { rotate: 270 });
+
+    // Memory/state bank: stable still lifes plus oscillators as timing references.
+    for (let i = 0; i < 6; i++) {
+      seedFromPattern("block", 64 + i * 10, 121);
+      seedFromPattern(i % 2 ? "beehive" : "loaf", 62 + i * 10, 134);
+    }
+    seedFromPattern("pulsar", 46, 134);
+    seedFromPattern("pentadecathlon", 132, 118);
+    seedFromPattern("beacon", 142, 144);
+
+    // Output / display bus: spaceships, blocks, and glider packets arranged as a readable stream.
+    seedFromPattern("lwss", 160, 126);
+    seedFromPattern("lwss", 184, 126);
+    seedFromPattern("lwss", 208, 126);
+    seedFromPattern("signal-train", 158, 146);
+    seedFromPattern("block", 238, 126);
+    seedFromPattern("block", 238, 134);
+    seedFromPattern("block", 238, 142);
+    drawCellText("OUTPUT", 174, 156, 1);
+    drawCellText("101101", 184, 168, 1);
+
+    // A lower discovery ecology: methuselahs feed a chaotic lab without overwhelming the circuit.
+    seedFromPattern("r-pentomino", 44, 184);
+    seedFromPattern("acorn", 98, 188);
+    seedFromPattern("die-hard", 158, 186);
+    seedFromPattern("pinwheel-seed", 206, 184);
+
+    // Inspection lenses make the demo feel like a live instrument, not just a static poster.
+    addLens("NOT collision", 132, 74, 58, 4.4);
+    addLens("state bank", 96, 136, 48, 4.0);
+    addLens("router", 204, 72, 46, 4.2);
+
+    // No altered physics here: the demo is pure B3/S23 Life, just arranged as circuitry.
+
     snapshotNow();
-    setOverlay("Demo loaded: dual gun crossfire in the lab.");
-    setTimeout(() => setOverlay(""), 2200);
+    zonesPanelSync();
+    fieldsPanelSync();
+    lensesPanelSync();
+    setCanvasMode("object");
+    draw();
+    setOverlay("Press Play: glider clocks drive gates, memory, routing, and output.");
+    setTimeout(() => setOverlay(""), 3600);
   }
 
   function resizeCanvas() {
