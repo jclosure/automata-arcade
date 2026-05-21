@@ -4347,9 +4347,9 @@
     clearBoard();
     state.running = false;
     document.getElementById("playBtn").textContent = "Play";
-    state.zoom = 3.8;
-    state.cameraX = 228;
-    state.cameraY = 188;
+    state.zoom = 1.85;
+    state.cameraX = 455;
+    state.cameraY = 210;
     state.zones = [];
     state.forceFields = [];
     state.lenses = [];
@@ -4430,11 +4430,6 @@
     seedFromPattern("acorn", 98, 188);
     seedFromPattern("die-hard", 158, 186);
     seedFromPattern("pinwheel-seed", 206, 184);
-
-    // Inspection lenses make the demo feel like a live instrument, not just a static poster.
-    addLens("NOT collision", 132, 74, 58, 4.4);
-    addLens("state bank", 96, 136, 48, 4.0);
-    addLens("router", 204, 72, 46, 4.2);
 
     // No altered physics here: the demo is pure B3/S23 Life, just arranged as circuitry.
 
