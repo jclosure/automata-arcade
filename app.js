@@ -1540,6 +1540,7 @@
     state._adaptPrevPop = 0;
     _driftAccX = 0;
     _driftAccY = 0;
+    state.demoCircuit = false;
     setOverlay("");
     hideGuide();
     updateHud();
@@ -3986,6 +3987,127 @@
     }
   }
 
+  function drawDemoCircuitOverlay() {
+    if (!state.demoCircuit) return;
+    const g = state.generation || 0;
+    const pulse = (Math.sin(g * 0.28) + 1) / 2;
+    const beat = (g % 30) / 30;
+
+    const W = (x, y) => worldToScreen(x, y);
+    const route = (pts, color, label, phase = 0) => {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.setLineDash([10, 9]);
+      ctx.lineDashOffset = -((g * 0.9 + phase) % 19);
+      ctx.strokeStyle = color.replace("ALPHA", (0.34 + pulse * 0.28).toFixed(2));
+      ctx.lineWidth = 2.5;
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = color.replace("ALPHA", "0.75");
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => {
+        const p = W(x, y);
+        i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+      });
+      ctx.stroke();
+
+      // arrow head on the last segment
+      const [ax, ay] = pts[pts.length - 2];
+      const [bx, by] = pts[pts.length - 1];
+      const a = W(ax, ay), b = W(bx, by);
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.setLineDash([]);
+      ctx.fillStyle = color.replace("ALPHA", "0.88");
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - Math.cos(ang - 0.55) * 13, b.y - Math.sin(ang - 0.55) * 13);
+      ctx.lineTo(b.x - Math.cos(ang + 0.55) * 13, b.y - Math.sin(ang + 0.55) * 13);
+      ctx.closePath();
+      ctx.fill();
+
+      if (label) {
+        const m = W((pts[0][0] + pts[pts.length - 1][0]) / 2, (pts[0][1] + pts[pts.length - 1][1]) / 2 - 4);
+        ctx.shadowBlur = 10;
+        ctx.font = "bold 11px monospace";
+        ctx.fillStyle = color.replace("ALPHA", "0.95");
+        ctx.fillText(label, m.x, m.y);
+      }
+      ctx.restore();
+    };
+
+    const ping = (x, y, color, label, phase = 0) => {
+      const local = ((g + phase) % 30) / 30;
+      const p = W(x, y);
+      const r = 12 + local * 46;
+      ctx.save();
+      ctx.strokeStyle = color.replace("ALPHA", (0.9 * (1 - local)).toFixed(2));
+      ctx.fillStyle = color.replace("ALPHA", (0.09 * (1 - local)).toFixed(2));
+      ctx.shadowBlur = 22;
+      ctx.shadowColor = color.replace("ALPHA", "0.95");
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (label && local < 0.18) {
+        ctx.font = "bold 11px monospace";
+        ctx.fillStyle = color.replace("ALPHA", "0.95");
+        ctx.fillText(label, p.x + 13, p.y - 13);
+      }
+      ctx.restore();
+    };
+
+    route([[78,62],[112,72],[134,74]], "rgba(91,224,188,ALPHA)", "CLOCK", 0);
+    route([[134,74],[168,74],[200,72]], "rgba(242,184,75,ALPHA)", "ROUTE", 8);
+    route([[128,108],[128,132],[156,146],[220,148]], "rgba(155,123,232,ALPHA)", "LATCH → OUTPUT", 15);
+    route([[88,184],[126,184],[166,184],[210,184]], "rgba(107,255,169,ALPHA)", "SEARCH", 5);
+
+    ping(132, 74, "rgba(224,91,122,ALPHA)", "NOT: annihilate", 0);
+    ping(204, 72, "rgba(242,184,75,ALPHA)", "turn", 10);
+    ping(96, 136, "rgba(155,123,232,ALPHA)", "memory", 18);
+    ping(222, 146, "rgba(91,196,224,ALPHA)", "output", 24);
+
+    // Pipeline status strip: makes cause/effect readable at a glance.
+    ctx.save();
+    const x0 = 18, y0 = 62, step = 76;
+    const stages = [
+      ["CLOCK", "#5be0bc", 0],
+      ["GATE", "#e05b7a", 6],
+      ["MEM", "#9b7be8", 13],
+      ["ROUTE", "#f2b84b", 20],
+      ["OUT", "#5bc4e0", 26],
+    ];
+    ctx.fillStyle = "rgba(5,14,22,0.58)";
+    ctx.strokeStyle = "rgba(140,220,240,0.18)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x0 - 10, y0 - 22, 400, 45, 12);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = "bold 10px monospace";
+    stages.forEach(([name, color, ph], i) => {
+      const lit = ((g + ph) % 30) < 12;
+      const cx = x0 + i * step;
+      ctx.beginPath();
+      ctx.fillStyle = lit ? color : "rgba(70,90,105,0.55)";
+      ctx.shadowBlur = lit ? 16 : 0;
+      ctx.shadowColor = color;
+      ctx.arc(cx, y0, lit ? 7 : 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = lit ? "#dffcff" : "#6f8592";
+      ctx.fillText(name, cx + 11, y0 + 4);
+      if (i < stages.length - 1) {
+        ctx.strokeStyle = "rgba(130,210,230,0.28)";
+        ctx.beginPath();
+        ctx.moveTo(cx + 48, y0);
+        ctx.lineTo(cx + step - 12, y0);
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+
   function draw() {
     for (const fn of _kernel.hooks.beforeDraw) { ctx.save(); try { fn(); } catch (_) {} ctx.restore(); }
     drawBackground();
@@ -3995,6 +4117,7 @@
     drawZoneBoundary();
     drawForceFields();
     drawZones();
+    drawDemoCircuitOverlay();
     drawManifoldBorder();
     drawSelection();
     drawNotebookPins();
@@ -4233,6 +4356,7 @@
     state._zoneSelected = null;
     state._ffSelected = null;
     state._lensSelected = null;
+    state.demoCircuit = true;
     state.ruleB = new Set([3]);
     state.ruleS = new Set([2, 3]);
     state._ruleDirty = true;
