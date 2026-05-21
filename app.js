@@ -4347,9 +4347,9 @@
     clearBoard();
     state.running = false;
     document.getElementById("playBtn").textContent = "Play";
-    state.zoom = 1.85;
-    state.cameraX = 455;
-    state.cameraY = 210;
+    state.zoom = 3.4;
+    state.cameraX = 260;
+    state.cameraY = 230;
     state.zones = [];
     state.forceFields = [];
     state.lenses = [];
